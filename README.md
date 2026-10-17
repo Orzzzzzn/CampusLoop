@@ -4,14 +4,13 @@ CampusLoop is a working local student carpool MVP with an English interface, a P
 
 ## Start with Docker
 
-Install and start Docker Desktop, or Docker Engine with Compose. Run these commands from the project root:
+Install and start Docker Desktop, or Docker Engine with Compose. Run this from the project root:
 
 ```bash
-cp .env.example .env
 docker compose up --build -d
 ```
 
-Open **http://127.0.0.1:8010**. Port 8010 is the browser port; port 8000 is internal to the app container. If 8010 is occupied, set `HEKY_PORT=8011` in `.env` and use that port in your browser. `HEKY_PORT` is retained as a configuration compatibility key.
+Defaults are set in `compose.yaml` (port 8010, demo mode, models). No `.env` file is required. Open **http://127.0.0.1:8010**. Port 8010 is the browser port; port 8000 is internal to the app container. If 8010 is occupied, run with a different host port, for example `CAMPUSLOOP_PORT=8011 docker compose up --build -d`.
 
 The first run downloads the chat model (`qwen2.5:1.5b`) and embedding model (`nomic-embed-text:v1.5`). The app can be used before the models are ready. Until then, the assistant returns retrieved documents with an explicit model-unavailable message.
 
@@ -34,19 +33,19 @@ The default runs on CPU. Model downloads, online place search, and maps need int
 
 ## Update an existing installation
 
-Replace the source files inside your **existing project directory** with the files from this archive. Keep your existing `.env`, database, and Docker volumes. Run the update from the same directory and with the same Compose project name you used before:
+Pull the latest source, then rebuild so the app container picks up new static files and Python code:
 
 ```bash
-HEKY_PORT=8010 docker compose up --build -d app
+docker compose up --build -d
 ```
 
-Then open http://127.0.0.1:8010 and hard-refresh the page (`Cmd+Shift+R` on macOS). If your installation previously used `docker compose -p ...`, continue using that same project name. Do not delete volumes to update.
+Open http://127.0.0.1:8010 and hard-refresh the page (`Cmd+Shift+R` on macOS). Without `--build`, Docker can keep serving an old image (including outdated UI copy).
 
-The archive still uses the `heky/` directory, `heky_data` volume key, database filename, and existing development password for compatibility. The product, interface, email messages, and assistant are named CampusLoop. Changing the directory or Compose project name can make Compose create a different empty database volume. The update adds the alias setting and place-search cache tables without replacing existing records. Legacy session cookies are accepted; new sign-ins use a CampusLoop cookie.
+Volumes and the database filename are now `campusloop_data` / `campusloop.sqlite3`. If you previously used `heky_data` / `heky.sqlite3`, Compose will start a fresh volume unless you copy the old database into the new volume or point `DATABASE_PATH` at the existing file. Changing the Compose project name also creates a new empty volume.
 
 ## Test accounts
 
-With `DEMO_MODE=1`, a fresh database creates these fictional accounts. Every account uses **`heky-local-2026`**. Changing `DEMO_PASSWORD` only affects the initial creation of a database; it does not reset existing users.
+With `DEMO_MODE=1`, a fresh database creates these fictional accounts. Every account uses **`campusloop-local-2026`**. Changing `DEMO_PASSWORD` only affects the initial creation of a database; it does not reset existing users.
 
 | Email | Seeded scenario |
 | --- | --- |
@@ -124,10 +123,10 @@ Python **3.11+** is required; Python 3.12 is the tested runtime. From the projec
 python3 -m app.server
 ```
 
-Open http://127.0.0.1:8010. The default local database is `data/heky.sqlite3`. Start a separate Ollama service and pull both models for AI generation. Without Ollama, booking, search, accounts, and retrieval fallback still work. Native Python does not load `.env` automatically; export environment variables before starting it:
+Open http://127.0.0.1:8010. The default local database is `data/campusloop.sqlite3`. Start a separate Ollama service and pull both models for AI generation. Without Ollama, booking, search, accounts, and retrieval fallback still work. Native Python does not load `.env` automatically; export environment variables before starting it:
 
 ```bash
-PORT=8011 DATABASE_PATH=./data/heky.sqlite3 python3 -m app.server
+PORT=8011 DATABASE_PATH=./data/campusloop.sqlite3 python3 -m app.server
 ```
 
 ## Troubleshooting login or startup
@@ -150,7 +149,7 @@ A successful DB/password diagnostic does not prove the browser reached the same 
 
 ## Configuration and implementation
 
-See `.env.example` for Compose settings. `DEMO_MODE=1` displays development verification codes and creates fictional seed data. For real student email delivery, use `DEMO_MODE=0` with a separate fresh database and configure SMTP and allowed `STUDENT_DOMAINS`; previously seeded accounts remain if the old database is reused. Set `COOKIE_SECURE=1` only behind HTTPS.
+Override Compose settings with environment variables when needed (see `compose.yaml` for names and defaults). `DEMO_MODE=1` displays development verification codes and creates fictional seed data. For real student email delivery, use `DEMO_MODE=0` with a separate fresh database and configure SMTP and allowed `STUDENT_DOMAINS`; previously seeded accounts remain if the old database is reused. Set `COOKIE_SECURE=1` only behind HTTPS.
 
 The Python app uses only the standard library: threaded HTTP, SQLite WAL transactions, scrypt password hashing, HttpOnly SameSite cookies, CSRF tokens, parameterized SQL, ownership checks, and rate limits. Location matching uses great-circle distance with one metre of rounding tolerance. All interface copy and project documentation are English; user-entered content is preserved as entered.
 

@@ -1,6 +1,5 @@
 """Real HTTP/SQLite integration tests; external inference uses an explicit HTTP fixture."""
 import concurrent.futures
-import copy
 import datetime as dt
 import http.cookiejar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,7 +11,8 @@ import unittest
 import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlsplit
-from app.domain import Store, PLACES, location, overlaps, Problem, check_password, distance_miles, shared_meeting_point
+from app.domain import (Store, PLACES, DEFAULT_DEMO_PASSWORD, location, overlaps, Problem,
+    check_password, distance_miles, shared_meeting_point)
 from app.places import Places
 from app.rag import Ollama, RAG
 from app.server import App, Server
@@ -28,14 +28,14 @@ class Client:
             with self.opener.open(req,timeout=15) as r:return r.status,json.load(r)
         except urllib.error.HTTPError as exc:return exc.code,json.load(exc)
     def login(self,email):
-        code,r=self.call('/api/auth/login',{'email':email+'@usc.edu','password':'heky-local-2026'})
+        code,r=self.call('/api/auth/login',{'email':email+'@usc.edu','password':DEFAULT_DEMO_PASSWORD})
         assert code==200,r
         self.csrf=r['csrf']
         return r['user']
 
 class AppTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.store=Store(Path(self.temp.name)/'heky.sqlite3')
+        self.temp=tempfile.TemporaryDirectory();self.store=Store(Path(self.temp.name)/'campusloop.sqlite3')
         self.app=App(self.store,demo_mode=True);self.server=Server(('127.0.0.1',0),self.app)
         self.thread=threading.Thread(target=self.server.serve_forever,kwargs={'poll_interval':.01},daemon=True);self.thread.start()
         self.base='http://127.0.0.1:'+str(self.server.server_port);self.clients={}
@@ -142,7 +142,7 @@ class AppTests(unittest.TestCase):
             self.app.rag=RAG(self.store,Ollama(f'http://127.0.0.1:{server.server_port}'))
             code,result=self.clients['jamie'].call('/api/rag/ask',{'question':'How do cancellation and waitlist work?','filters':{'date':self.date}})
             self.assertEqual(code,200,result);self.assertEqual(result['mode'],'rag');self.assertTrue(result['sources'])
-            self.assertNotIn('password_hash',json.dumps(result));self.assertNotIn('heky-local-2026',json.dumps(result))
+            self.assertNotIn('password_hash',json.dumps(result));self.assertNotIn(DEFAULT_DEMO_PASSWORD,json.dumps(result))
         finally:server.shutdown();server.server_close();thread.join(2)
 
     def test_recurring_creation_returns_first_actual_date(self):
@@ -228,7 +228,7 @@ class AppTests(unittest.TestCase):
         promoted=next(r for r in self.search('leo') if r['id']==ride['id'])
         self.assertEqual(promoted['owner_name'],'Mina Park');self.assertTrue(promoted['identity_revealed'])
 
-    def test_old_database_upgrade_and_legacy_cookie(self):
+    def test_old_database_upgrade_and_session_cookie(self):
         ride=self.create()
         with self.store.tx() as db:
             counts={t:db.execute('SELECT count(*) FROM '+t).fetchone()[0] for t in ['users','trips','occurrences','applications','sessions']}
@@ -237,15 +237,14 @@ class AppTests(unittest.TestCase):
         upgraded=Store(self.store.path)
         with upgraded.read() as db:
             for table,count in counts.items():self.assertEqual(db.execute('SELECT count(*) FROM '+table).fetchone()[0],count)
-            self.assertTrue(check_password('heky-local-2026',db.execute("SELECT password_hash FROM users WHERE email='jamie@usc.edu'").fetchone()[0]))
+            self.assertTrue(check_password(DEFAULT_DEMO_PASSWORD,db.execute("SELECT password_hash FROM users WHERE email='jamie@usc.edu'").fetchone()[0]))
             salt=db.execute("SELECT value FROM app_settings WHERE key='identity_salt'").fetchone()[0]
         with Store(self.store.path).read() as db:self.assertEqual(db.execute("SELECT value FROM app_settings WHERE key='identity_salt'").fetchone()[0],salt)
-        legacy=Client(self.base)
         for cookie in self.clients['jamie'].jar:
-            old=copy.copy(cookie);self.assertEqual(old.name,'campusloop_session');old.name='heky_session';legacy.jar.set_cookie(old)
-        self.assertEqual(legacy.call('/api/me')[0],200)
-        legacy.csrf=self.clients['jamie'].csrf
-        self.assertEqual(legacy.call('/api/auth/logout',{})[0],200);self.assertEqual(legacy.call('/api/me')[0],401)
+            self.assertEqual(cookie.name,'campusloop_session')
+        self.assertEqual(self.clients['jamie'].call('/api/me')[0],200)
+        self.assertEqual(self.clients['jamie'].call('/api/auth/logout',{})[0],200)
+        self.assertEqual(self.clients['jamie'].call('/api/me')[0],401)
 
     def test_place_search_endpoint_and_bad_bias(self):
         code,result=self.clients['jamie'].call('/api/places/search',{'query':'USC'})

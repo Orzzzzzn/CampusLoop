@@ -21,10 +21,10 @@ import threading
 import time
 from urllib.parse import parse_qs, urlsplit
 
-from .domain import (ROOT, PLACES, Problem, Store, application_views, boolean, can_chat,
-    cancel_application, check_password, claim, decide, ensure_open, event, hash_password,
-    joined_occurrence, list_trips, now, occupied, promote, public_user, request_ride,
-    require, seed, text, trip_create, identity_name, private_text)
+from .domain import (ROOT, DEFAULT_DATABASE_NAME, PLACES, Problem, Store, application_views,
+    boolean, can_chat, cancel_application, check_password, claim, decide, ensure_open, event,
+    hash_password, joined_occurrence, list_trips, now, occupied, promote, public_user,
+    request_ride, require, seed, text, trip_create, identity_name, private_text)
 from .rag import RAG
 from .places import Places
 
@@ -55,7 +55,7 @@ class App:
         cookie=SimpleCookie()
         try:
             cookie.load(headers.get('Cookie',''))
-            token=(cookie.get('campusloop_session') or cookie.get('heky_session')).value
+            token=cookie['campusloop_session'].value
         except (KeyError,AttributeError):
             raise Problem(401,'Sign in to continue.')
         with self.store.read() as db:
@@ -162,7 +162,7 @@ class App:
         if path=='/api/auth/logout' and method=='POST':
             cookie=SimpleCookie();cookie.load(headers.get('Cookie',''))
             with self.store.tx() as db:
-                db.execute('DELETE FROM sessions WHERE token_hash=?',(hashlib.sha256((cookie.get('campusloop_session') or cookie.get('heky_session')).value.encode()).hexdigest(),))
+                db.execute('DELETE FROM sessions WHERE token_hash=?',(hashlib.sha256(cookie['campusloop_session'].value.encode()).hexdigest(),))
             return {'ok':True},200,{'Set-Cookie':'campusloop_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'}
         if path=='/api/places/search' and method=='POST':
             self.rate(('places',user['id']),30,300)
@@ -333,7 +333,7 @@ class Server(ThreadingHTTPServer):
 
 def main():
     logging.basicConfig(level=os.getenv('LOG_LEVEL','INFO'))
-    store=Store(os.getenv('DATABASE_PATH',str(ROOT/'data/heky.sqlite3')))
+    store=Store(os.getenv('DATABASE_PATH',str(ROOT/'data'/DEFAULT_DATABASE_NAME)))
     app=App(store)
     server=Server((os.getenv('HOST','127.0.0.1'),int(os.getenv('PORT','8010'))),app)
     LOG.info('CampusLoop listening on %s:%s',*server.server_address)

@@ -3,12 +3,12 @@ services:
     build: .
     init: true
     ports:
-      - "127.0.0.1:${HEKY_PORT:-8010}:8000"
+      - "127.0.0.1:${CAMPUSLOOP_PORT:-8010}:8000"
     environment:
       HOST: "0.0.0.0"
-      DATABASE_PATH: "/app/data/heky.sqlite3"
+      DATABASE_PATH: "/app/data/campusloop.sqlite3"
       DEMO_MODE: "${DEMO_MODE:-1}"
-      DEMO_PASSWORD: "${DEMO_PASSWORD:-heky-local-2026}"
+      DEMO_PASSWORD: "${DEMO_PASSWORD:-campusloop-local-2026}"
       STUDENT_DOMAINS: "${STUDENT_DOMAINS:-usc.edu}"
       GEOCODER_URL: "${GEOCODER_URL:-https://photon.komoot.io/api/}"
       COOKIE_SECURE: "${COOKIE_SECURE:-0}"
@@ -22,7 +22,7 @@ services:
       SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
       SMTP_STARTTLS: "${SMTP_STARTTLS:-1}"
     volumes:
-      - heky_data:/app/data
+      - campusloop_data:/app/data
       - ./knowledge:/app/knowledge:ro
     depends_on:
       ollama:
@@ -59,5 +59,5 @@ services:
         condition: service_healthy
     restart: "no"
 volumes:
-  heky_data:
+  campusloop_data:
   ollama_models:

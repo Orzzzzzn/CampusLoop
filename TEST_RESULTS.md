@@ -8,7 +8,7 @@ Verification date: 2026-10-17. Runtime: Python 3.12.
 - All upcoming dates and both post roles are listed without a default date/role filter. Specific dates, date ranges, and inclusive departure-hour windows combine correctly; invalid windows are rejected.
 - Both pickup and drop-off areas must match when both filters are supplied. A matching pickup with an unrelated destination is excluded. Results sort by distance from the requested locations. Suggested meeting points lie in both overlapping circles, including overlap where neither center lies inside the other circle.
 - Board responses, incoming/outgoing requests, activity, and RAG documents mask other users' names before confirmation. Confirmed participants see real names. Third-party viewers and waitlisted users still see aliases. Canceling restores the alias for the former participant; promotion reveals names to the newly confirmed user.
-- Upgrade from the previous schema preserves account, trip, occurrence, application, and session records. Existing password hashes still validate. The persisted alias salt survives repeated initialization. Legacy session cookies remain accepted and can be logged out.
+- Upgrade from the previous schema preserves account, trip, occurrence, application, and session records. Existing password hashes still validate. The persisted alias salt survives repeated initialization. Session cookies use `campusloop_session`.
 - Place-search endpoint, bundled places, HTTP geocoder response parsing, rounded search bias, caching, invalid coordinates, rate limiting, and unavailable-provider behavior passed. The online geocoder was exercised against an explicit local Photon-format HTTP fixture, not the public service.
 - Existing authentication, CSRF, ownership, rider-offer acceptance, concurrent seat approvals, concurrent manual waitlist claims, automatic promotion, recurring-date isolation, private persisted chat, student verification, round-trip cancellation, and first actual recurrence date tests passed.
 - RAG embedding and generation HTTP contracts, cache reuse, and citation handling passed with a local HTTP fixture. The fixture does not run a language model. The model-unavailable path returns retrieved sources with `answer: null`.
@@ -21,7 +21,7 @@ Verification date: 2026-10-17. Runtime: Python 3.12.
 
 Docker image build or Compose container startup, actual downloaded model inference, public Photon requests, SMTP delivery, online map tiles, browser geolocation, and rendered browser interaction were not executed in this environment. Docker and a browser runtime were unavailable. These checks are not reported as passing.
 
-Run the included tests from `heky/`:
+Run the included tests from the project root:
 
 ```bash
 python3 -m unittest discover -s tests -v

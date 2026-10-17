@@ -19,6 +19,8 @@ except ZoneInfoNotFoundError:
     with (Path(__file__).parent/'zoneinfo/Los_Angeles').open('rb') as zone_file:
         ZONE = ZoneInfo.from_file(zone_file,key='America/Los_Angeles')
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DEMO_PASSWORD = 'campusloop-local-2026'
+DEFAULT_DATABASE_NAME = 'campusloop.sqlite3'
 
 
 class Problem(Exception):
@@ -515,7 +517,7 @@ def seed(store):
     with store.tx() as db:
         if db.execute('SELECT count(*) FROM users').fetchone()[0]:
             return
-        password=hash_password(os.getenv('DEMO_PASSWORD','heky-local-2026'))
+        password=hash_password(os.getenv('DEMO_PASSWORD', DEFAULT_DEMO_PASSWORD))
         people=[('Jamie Lee','jamie','Honda Civic · Blue'),('Mina Park','mina','Toyota Prius · Silver'),('Sofia Lee','sofia','Hyundai Ioniq · White'),('Daniel Kim','daniel',''),('Leo Kim','leo',''),('Ethan Wu','ethan','')]
         ids={}
         for name,email,vehicle in people:
