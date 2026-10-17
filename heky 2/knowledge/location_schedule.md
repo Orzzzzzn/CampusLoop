@@ -1,0 +1,10 @@
+# Places, ranges, and date filters
+Pickup and drop-off independently support Exact place or Nearby area. Search a place or address, select a result, and choose the allowed radius. The interface shows a place and range rather than editable coordinates. A location must have a resolved map point; typing a label alone does not resolve an address. A map click or browser-approved current location can also set that point. Some sample places work offline; other place searches use a configurable Photon service and need internet access.
+
+An exact place has zero flexibility radius. An area allows a radius from 0.1 to 10 miles around the chosen place. With both route filters active, pickup areas must overlap AND drop-off areas must overlap. Results are ranked by the sum of the center distances from the user's requested places. A single enabled location filter checks only that end. Suggested exact meeting points fall within both overlapping areas. The owner accepts the final proposed points when confirming a request.
+
+Matching uses great-circle geographic distance and circle overlap with one metre of rounding tolerance. Radius is straight-line distance, not road distance, walking time, live traffic ETA, or computed driving detour. The listed detour limit is a separate preference for the driver to review. Check the actual meeting entrance before traveling.
+
+The All rides board defaults to every upcoming active driver post and rider request across dates. Filter a specific date, date range, inclusive departure-hour range, requested arrival deadline, trip type, recurring weekdays, or listed detour limit. Times use America/Los_Angeles and whole hours. An arrival deadline is requested latest arrival, not a traffic prediction.
+
+Recurring schedules create separate ride dates with independent seats and cancellation. One-time trips create one date. A round trip uses one booking for both outbound and return legs on the same date, with the same party and capacity. Canceling that date cancels both legs. Other recurring dates stay unchanged.

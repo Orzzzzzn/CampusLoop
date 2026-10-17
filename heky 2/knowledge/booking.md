@@ -1,0 +1,6 @@
+# Requests, acceptance, and seats
+CampusLoop is a student carpool application. A driver post offers passenger seats. A rider post asks another student to drive. Only the post owner may accept or decline incoming requests. For a rider post, the rider accepts a driver's offer; only one driver can be confirmed for that date. Other outstanding driver offers are then declined. Add a vehicle description to your profile before offering to drive.
+
+A pending request never occupies a seat. Confirmed parties reserve their full passenger count. Drivers are not counted as passenger seats. Capacity is checked in database transactions. Requests propose exact meeting points inside the posted pickup and drop-off areas. The owner agrees to those points by accepting the request. Nearby search suggests relevant rides but never automatically approves a booking.
+
+Accepted rides appear in My rides. Real names become visible to the owner and currently confirmed participants only for that ride date. Before confirmation, participants see pseudonyms. Costs are proposed cost-sharing amounts or rider budgets, not platform charges; no payments are collected. Chat is restricted to the owner and currently confirmed participants.
