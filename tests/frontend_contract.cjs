@@ -14,7 +14,8 @@ class FormAdapter{
  has(name){return this.entriesList.some(([key])=>key===name)}
  [Symbol.iterator](){return this.entriesList[Symbol.iterator]()}
 }
-const runtime=vm.createContext({document,window:{},navigator:{},FormData:FormAdapter,structuredClone,setTimeout,clearTimeout,console,fetch:(path,options={})=>fetch(input.base+path,{...options,headers:{...options.headers,Cookie:input.sessions[principal].cookie}})});
+const runtime=vm.createContext({document,window:{scrollTo(){}},navigator:{},FormData:FormAdapter,structuredClone,setTimeout,clearTimeout,console,fetch:(path,options={})=>fetch(input.base+path,{...options,headers:{...options.headers,Cookie:input.sessions[principal].cookie}})});
+vm.runInContext(fs.readFileSync(input.js.replace(/app\.js$/, 'landing.js'),'utf8'),runtime);
 const source=fs.readFileSync(input.js,'utf8').replace(/\nboot\(\);\s*$/,'');vm.runInContext(source,runtime);
 const run=code=>vm.runInContext(code,runtime),app=run('app'),clean=value=>JSON.parse(JSON.stringify(value));
 function form(id,fields){const elements=Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,{value:v,disabled:false}]));const parts=new Map();return {id,elements,isConnected:true,dataset:{},querySelector(s){if(!parts.has(s))parts.set(s,node());return parts.get(s)},querySelectorAll(){return []}}}
@@ -24,8 +25,8 @@ const button=(dataset,attributes=[])=>({dataset,hasAttribute:name=>attributes.in
 const click=async b=>run('handleClick')({target:{closest(){return b}}});
 async function as(who,page='browse',tab='incoming'){principal=who;app.user=input.sessions[who].user;app.csrf=input.sessions[who].csrf;app.page=page;app.requestTab=tab;app.criteria={};app.boardRole='all';await run('refresh')()}
 (async()=>{
- await run('boot')();assert(app.user,'Boot must retain the authenticated API session');
- assert.equal(app.config.version,'2.2.4');assert.equal(app.boardRole,'all');assert.equal(new Set(app.rides.map(r=>r.role)).size,2);assert(new Set(app.rides.map(r=>r.trip_date)).size>1);
+ await run('boot')();assert(app.user,'Boot must retain the authenticated API session');assert.equal(app.page,'home');assert(select('#app').innerHTML.includes('Share the route.'));await run('navigate')('browse');
+ assert.equal(app.config.version,'2.2.0');assert.equal(app.boardRole,'all');assert.equal(new Set(app.rides.map(r=>r.role)).size,2);assert(new Set(app.rides.map(r=>r.trip_date)).size>1);
  assert(app.rides.every(r=>!r.identity_revealed&&r.owner_name.startsWith('Loop Member ')),'A fresh student sees only aliases');
  let html=select('#app').innerHTML;assert(html.includes('Ask CampusLoop.'));assert(html.includes('Recurring rides'));assert(html.includes('One-time & round trips'));assert(!/[\uac00-\ud7a3]/.test(html));assert(!/sample pin|latitude|longitude/i.test(html));
  const blank=run('locationFields')('origin',null,true,false);assert(blank.includes('value=""'));assert(!blank.includes('Wilshire'));assert(!blank.includes('disabled'));assert(!/name="origin_(lat|lon)"/.test(blank));

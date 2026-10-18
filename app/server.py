@@ -325,7 +325,7 @@ class Handler(BaseHTTPRequestHandler):
     def run_request(self):
         try:
             path=urlsplit(self.path).path
-            static={'/':'index.html','/static/app.js':'app.js','/static/style.css':'style.css'}
+            static={'/':'index.html','/static/app.js':'app.js','/static/style.css':'style.css','/static/landing.js':'landing.js','/static/landing.css':'landing.css',**{f'/static/landing-photo-{i}.jpeg':f'landing-photo-{i}.jpeg' for i in range(7)}}
             if self.command=='GET' and path in static:
                 file=ROOT/'static'/static[path]
                 require(file.is_file(),'Page not found.',404)
