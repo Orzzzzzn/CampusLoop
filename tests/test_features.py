@@ -47,8 +47,13 @@ class FeatureTests(unittest.TestCase):
         self.assertFalse(any(r['id']==ride['id'] for r in self.mine(departure_from=10)))
         self.assertEqual(self.mine(date='2000-01-01'),[])
         self.assertEqual(next(r for r in self.mine('mina',date=self.date) if r['id']==ride['id'])['my_role'],'driver')
-        # The owner of a rider post must see the offering driver, rather than themselves.
-        wanted=self.create(owner='daniel',role='rider');offer=self.apply('mina',wanted)
+        # Open rider posts appear under Still pending until a driver is accepted.
+        wanted=self.create(owner='daniel',role='rider')
+        pending=next(r for r in self.mine('daniel',date=self.date) if r['id']==wanted['id'])
+        self.assertEqual(pending['my_role'],'pending');self.assertEqual(pending['pending_offers'],0)
+        offer=self.apply('mina',wanted)
+        pending=next(r for r in self.mine('daniel',date=self.date) if r['id']==wanted['id'])
+        self.assertEqual(pending['my_role'],'pending');self.assertEqual(pending['pending_offers'],1)
         self.clients['daniel'].call(f'/api/applications/{offer}/accept',{})
         r=next(r for r in self.mine('daniel',date=self.date) if r['id']==wanted['id'])
         self.assertEqual(r['my_role'],'rider');self.assertEqual(r['driver']['name'],'Mina Park')
