@@ -64,7 +64,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.clients['leo'].call(f'/api/applications/{aid}/accept',{})[0],403)
         self.assertEqual(self.status('jamie',aid),'pending')
         with urllib.request.urlopen(self.base) as r:
-            self.assertIn(b'/static/app.js',r.read());self.assertIn('frame-ancestors',r.headers['Content-Security-Policy'])
+            html=r.read();self.assertIn(b'/static/api.js',html);self.assertIn(b'/static/events.js',html);self.assertIn('frame-ancestors',r.headers['Content-Security-Policy'])
         self.clients['jamie'].call('/api/auth/logout',{})
         self.assertEqual(self.clients['jamie'].call('/api/me')[0],401)
     def test_rider_offer_accept_and_cancel(self):

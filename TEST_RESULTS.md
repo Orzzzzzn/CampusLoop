@@ -13,7 +13,7 @@ Verification date: 2026-10-17. Runtime: Python 3.12.
 - Existing authentication, CSRF, ownership, rider-offer acceptance, concurrent seat approvals, concurrent manual waitlist claims, automatic promotion, recurring-date isolation, private persisted chat, student verification, round-trip cancellation, and first actual recurrence date tests passed.
 - RAG embedding and generation HTTP contracts, cache reuse, and citation handling passed with a local HTTP fixture. The fixture does not run a language model. The model-unavailable path returns retrieved sources with `answer: null`.
 - A separate `python3 -m app.server` process started on the native default port **8010**. Health identified CampusLoop and a working database. HTML, JavaScript, CSS, configuration, cookie sign-in followed by `/api/me`, and all-date/all-role ride listing returned successfully.
-- `node --check static/app.js`, Python parsing, and compilation passed.
+- `node --check` on the split frontend modules (`api.js`, `map.js`, `views.js`, `events.js`), Python parsing, and compilation passed.
 - Compose YAML parsed successfully; app/Ollama/model-init services, port 8010 binding, internal port 8000, escaped model environment variables, and the existing database volume key were checked.
 - Project source and documentation scan found no Korean text. User-created database content is preserved as entered.
 
@@ -25,7 +25,7 @@ Run the included tests from the project root:
 
 ```bash
 python3 -m unittest discover -s tests -v
-node --check static/app.js
+node --check static/api.js static/map.js static/views.js static/events.js
 ```
 
 See README.md for startup, updates that preserve existing data, model readiness, privacy behavior, and location-search configuration.

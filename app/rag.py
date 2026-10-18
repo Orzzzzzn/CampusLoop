@@ -11,7 +11,9 @@ import threading
 import urllib.error
 import urllib.request
 
-from .domain import ROOT, Problem, list_trips
+from .errors import Problem
+from .paths import ROOT
+from .rides import list_trips
 
 
 class Ollama:
@@ -43,9 +45,7 @@ class Ollama:
                 'Do not claim to book, approve, cancel, charge, or change data. You have no action tools. '
                 'Cite factual statements using [S1], [S2], etc. Use only existing source IDs. '
                 'If the sources do not answer the question, clearly say so. Do not invent rides, ETAs, rules, or fees. '
-                'Distinguish available seats from a pending request or a waitlist. '
-                'Always answer in English only. Never reply in Korean or any other language. '
-                'Never infer real identities from pseudonyms. '
+                'Distinguish available seats from a pending request or a waitlist. Always answer in English. Never infer real identities from pseudonyms. '
                 'A ride record describes only its specific date. Live road travel times are not available.')
         result=self.post('/api/generate',{'model':self.chat_model,'system':system,'prompt':f'<retrieved_sources>\n{sources}\n</retrieved_sources>\nQuestion: {question}', 'stream':False,'options':{'temperature':0.1,'num_predict':700,'num_ctx':6144}})
         answer=result.get('response','').strip()

@@ -154,11 +154,14 @@ Override Compose settings with environment variables when needed (see `compose.y
 The Python app uses only the standard library: threaded HTTP, SQLite WAL transactions, scrypt password hashing, HttpOnly SameSite cookies, CSRF tokens, parameterized SQL, ownership checks, and rate limits. Location matching uses great-circle distance with one metre of rounding tolerance. All interface copy and project documentation are English; user-entered content is preserved as entered.
 
 ```text
-app/domain.py       Database, validation, matching, aliases, booking transactions
+app/server.py       HTTP API, route table, sessions, verification, static files
+app/rides.py        Trip posting, search, requests, waitlist, chat gates
+app/db.py           SQLite schema and Store helpers
+app/identity.py     Pseudonyms, privacy masking, activity events
 app/places.py       Cached local/Photon place search
-app/server.py       HTTP API, sessions, verification, static files
 app/rag.py          Retrieval, embedding cache, Ollama generation
-static/             English HTML, CSS, and JavaScript interface
+app/domain.py       Compatibility re-exports for tests and older imports
+static/             HTML/CSS plus split JS (api, map, views, events)
 knowledge/          English RAG guidance
 tests/test_app.py   HTTP, SQLite, concurrency, privacy, geocoding, and RAG tests
 ```
@@ -167,7 +170,7 @@ tests/test_app.py   HTTP, SQLite, concurrency, privacy, geocoding, and RAG tests
 
 ```bash
 python3 -m unittest discover -s tests -v
-node --check static/app.js
+node --check static/api.js static/map.js static/views.js static/events.js
 ```
 
 See `TEST_RESULTS.md` for the checks actually executed and their limitations. This is a local MVP: school enrollment, driver eligibility, road routes, live traffic, payment processing, password recovery, and production deployment operations are not implemented.
