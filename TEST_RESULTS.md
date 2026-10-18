@@ -1,56 +1,38 @@
-# CampusLoop 2.2.0 verification record
+# CampusLoop 2.4.1 verification
 
-## Pricing update verified on 2026-10-17
+Verified on 2026-10-18 with Python 3.12.14 and Node.js 24.19.0.
 
-**55 tests passed** with Python 3.12.4 and Node.js 24.16.0 using `python -m unittest discover -s tests -v`. SQLite and HTTP fixtures use temporary local data; no user database or paid Google request was used. JavaScript syntax and `git diff --check` also passed.
+## Executed
 
-- Google `computeRoutes` HTTP fixtures verify POST method, server-only API-key header, field mask, `DRIVE`, `TRAFFIC_AWARE`, scheduled departure converted from America/Los_Angeles to UTC, distance/duration units, short cache reuse and higher traffic duration increasing the base price.
-- Automatic prices use the new $0.60/mile + $0.30/minute formula and 0.65 rider multiplier. Fractional units are preserved until final cent rounding. New automatic prices have no legacy minimum/maximum or service fee.
-- Shared prices update across requests and confirmed rides for parties, acceptance, cancellation, waitlist promotion and manual claims. Pending/waitlisted parties do not occupy seats. Another member cannot inspect a private application quote; stale rider-count confirmation is rejected.
-- Round trips request both directions at their own scheduled departure. Recurring estimates use the first selected weekday. Missing keys, provider errors and malformed durations return no automatic price; no OSRM/mock fallback is used for pricing.
-- Production JavaScript contract checks cover driver posting earnings ranges, rider price ranges, Google metrics and acceptance price confirmation. The existing full frontend handler contract against the local Python API also passed. These checks inspect HTML/handlers, not browser layout.
-- Existing fixed-price snapshots, booking/capacity, authentication/privacy, ratings, RAG, map previews and updater tests remain passing.
+**113 tests passed** with `python3 -m unittest discover -s tests -v`. Sixteen live-app checks cover the Google-only migration and clean presentation start. Tests use temporary SQLite databases, normal HTTP application endpoints and explicit external-service HTTP fixtures. No destination user database was modified here.
 
-Real Google API access was not tested because `GOOGLE_MAPS_API_KEY` is not set in this environment. Docker deployment and full browser rendering were not performed for this change. API setup and estimate lifetime are documented in README.md.
+- Fresh production startup creates five login accounts and ten ordinary posts (19 dates), with zero applications. No passenger is preconfirmed or waitlisted. Prepared posts load Google quotes asynchronously and cannot accept a request while pricing is unavailable.
+- The production JavaScript handlers posted a new Tuesday 13:00 recurring driver offer with two seats, through the normal app API. Yelyn, Hannah and Emily requested two dates, Kate reviewed price dialogs and accepted, and the database recorded two confirmed parties plus one approved waitlist on each date. Yelyn's first-week cancellation promoted Emily only on that date; Hannah and next week's bookings remained unchanged. Kate's cancellation of another week canceled that date without promoting a waitlist into a canceled offer.
+- Those handler checks ran against a real local Python HTTP server and SQLite, using a minimal DOM/form adapter. They also verify single requests for repeated submits/clicks, one outgoing waitlist rendering, disjoint Sent/My waitlist tabs, driver identity after confirmation, Google price summaries, removed example selectors and the requested landing headings/formulas. They do not establish browser layout or full browser click behavior.
+- `run_flow.py` default execution was repeated and verified to create zero posts/applications/cancellations. Its initial-offer link opened the actual saved ride in the production handlers. With explicit `--perform-sequence`, the script was executed against the real local application server using normal login, quote, post, request, price-review, accept and week-cancel endpoints. Its six application rows ended as four confirmed, one canceled and one waitlisted across two dates. Repeating the command reused the saved post and did not add applications or posts. It never inserts preset booking fixtures or writes directly to the database.
+- Google protocol tests use an explicitly identified HTTP fixture returning 10 miles and 20 minutes. For that fixture, the base is $12, the two-rider contribution is $9.90, and driver earnings are $19.80. These numbers verify the formula; they are **not actual Google fares for the prepared routes**. The production runtime requests Google's endpoint with its configured key; there is no fixture/mock fallback in the app.
+- Missing keys block booking, rather than showing a $4 or $0 Google price. Provider failures remain unavailable; retry succeeds when the fixture recovers, without duplicating posts. Successful quotes include distance, traffic-aware duration, timestamp, source and shared-price metadata. Earlier setup records keep their exact application rows/statuses, agreed amounts, passwords and profile data, but are excluded from the default flow and read-only. Independently posted rides are retained.
+- Existing Google tests continue to cover scheduled timezone conversion, traffic-aware POST/field mask/key headers, fractional precision and cent rounding, cache behavior, round-trip directions, recurring scheduling, malformed responses, party counts, stale price confirmation, cancellations, promotions and manual claims.
+- Existing untracked manual posts and single-date overrides were migrated to independent scheduled Google quotes. The fixture returned different durations for different dates: 10 miles/20 minutes produced a $12 base; 10 miles/35 minutes produced $16.50. Departure edits requoted only that date; historical dates and original stored amounts stayed unchanged. Existing confirmed manual bookings displayed the computed $9.90 two-rider amount consistently in board, Requests and My rides while their original $4 agreements remained stored. Manual new-post inputs were rejected; forged client amounts were ignored. Reposting a driver-canceled request also received a new quote.
+- Updating a simulated 2.4.0 database archived its generated offers and exact runner post signature, retained account/password/application bytes, removed archived notifications from normal views and created a fresh Kate offer with zero applications. Repeated startup did not reset the presentation again.
+- Authentication, CSRF, ownership, aliases, private chat, date/week isolation, party capacity races, queue priority, recommendations, ratings, migrations, geocoding, map previews and RAG retrieval/citations retain regression coverage. Legacy preset data is explicitly created only in isolated regression fixtures; it is disabled in the production app.
+- Twenty-four updater checks use a Docker CLI fixture. They retain database mounts, project, settings, recovery configurations and custom guidance, reject stale served assets, and cover explicit `--google-env` loading through a private override. Tests verify private file permissions, dollar escaping, no printed key, correct key delivery, unchanged original `.env`/database, and no writes on dry run.
+- The extracted 49-file archive was started as a native Python process: health returned 2.4.1/database ok, all 19 future dates correctly stayed unpriced with a missing key, Kate had four 13:00 dates with two seats and zero bookings, the default runner created nothing, and all served static asset bytes matched the archive. Syntax, English-source/doc and archive checks passed. No real credentials or database are packaged.
 
-## Repository baseline record retained below
+## External-service and environment limits
 
-Verification date: 2026-10-18. Runtime: Python 3.12 and Node.js 24.
+This runtime has **no Google API key and no Docker executable**. Paid Google Routes requests and real Docker build/container recreation were not performed here. Production Google availability must be verified on the destination server after configuring its own key; a present key alone does not prove billing/API access or a returned route. Public Photon/OSRM services, online tiles, live SMTP, browser geolocation, full browser rendering and downloaded Ollama model inference were not executed.
 
-## Executed successfully
-
-**46 tests passed** using temporary SQLite databases and actual local HTTP servers. No real user database was used.
-
-- Find a ride separates regular rides from one-time/round trips. My rides filters specific dates and inclusive departure-hour windows, distinguishes actual drivers from confirmed passengers, and shows driver name, vehicle, role-specific rating and agreed prices. Driver offers accepted by a rider post resolve to the actual offering driver.
-- One-date recurring exceptions change only that occurrence's schedule and notes, apply before search filters and request views, and reject edits with active requests. Owner and passenger week-only cancellations affect the selected Monday–Sunday week, preserve later weeks, and promote eligible waitlisted passengers where seats open.
-- All four fresh Demo Lab cases were exercised through HTTP: automatic promotion, manual claim, whole-party fit, and pending requests excluded from promotion. A second batch works in an existing database without resetting original trips. Cross-user release is rejected and disabled demo mode rejects the lab endpoints.
-- Completed-ride ratings reject premature and nonparticipant votes, enforce 1–5 stars, and update one existing vote without increasing the count. Public averages and counts retain anonymous names. Past ride views expose eligible rating targets.
-- Automatic cost-share computation uses server-calculated route miles, rounding, lower/upper bounds and round-trip multiplication. Request-time price snapshots survive a later stored post-price change and appear in confirmed rides and application party totals.
-- Recommendation sorting and explanations rank the requested route, departure time, listed cost/budget, role-specific rating and available seats after filtering. Alternative sort validation passed.
-- OSRM-format HTTP fixture tests verify real geometry parsing, distance and estimated duration, a named User-Agent, query options, cache reuse, queued distinct routes, automatic pricing and explicitly labelled offline approximation. No public routing call is required by the suite.
-- The production JavaScript ran against the real Python API through a minimal document/form adapter. Verified boot/session, empty location defaults, explicit place selection, both-end area search, date/hour filters, unresolved-address protection, post/request/accept flows, anonymous icons, confirmed real names/initials, role tabs, My rides date retention, driver details, prices, route SVG markup, Demo Lab release/manual claim, completed-ride rating, one-date editing and week-only skipping. This is a handler/HTML contract check, not browser layout testing.
-- Additive migration from the old column layout preserves users, password hashes and booking states, adding price snapshots and occurrence overrides without a reset. Older sample-marker suffix cleanup preserves coordinates and bookings. Legacy cookie compatibility passed.
-- Existing authentication, CSRF, ownership, concurrent capacity/claim decisions, whole-party allocation, recurring-date isolation, round-trip handling, student verification and persisted private chat regression checks passed.
-- Place lookup, Photon-format HTTP parsing, bias, cache, validation, rate limits and failure behavior passed. Broad region searches are not silently replaced by saved stations.
-- RAG embedding/generation HTTP contracts, caching, permission-filtered ride sources, citations and explicit model-unavailable behavior passed using a local fixture. Actual model inference is not performed by that fixture.
-- Updater Docker CLI fixture checks preserve the original project, build context, settings, port and database mount, create a source backup, and reject ambiguous or unpersisted storage. Old health responses, stale frontend contents, and stale CSS under a correct version badge are rejected.
-- A separate native `python3 -m app.server` process started successfully on an assigned local port with a temporary database. Live health returned CampusLoop 2.2.0 / API 2.2 / database ok. The updater verified complete served HTML, JavaScript and CSS against release hashes. Login, creation of six fresh examples and two completed ride views worked on that process.
-- Python compilation, JavaScript syntax checks, English-only source/documentation scan and ZIP integrity checks passed.
-
-## Not executed
-
-Docker image construction, real Compose container recreation, public Photon/OSRM calls, actual downloaded Ollama models, live SMTP, online map tiles, geolocation and full browser rendering/click verification were not executed. Docker is unavailable in this runtime. The earlier cloud browser could not reach the runtime's localhost and its URL policy disallowed local file previews. No bypass was attempted.
-
-The update is not marked successful on the user's computer until `upgrade.py` verifies its actual running server and served frontend. Existing user-authored content remains as entered. Demo Lab records and ratings are explicitly synthetic development examples.
+The explicit sequence command performs real application activity, but its upstream Google response here was an HTTP fixture. The default command is read-only. The delivered app uses the destination server's actual Google quotes; missing/failed quotes do not receive invented fares.
 
 ## Repeat
-
-From `heky/`:
 
 ```bash
 python3 -m unittest discover -s tests -v
 node --check static/app.js
-node --check tests/frontend_contract.cjs
+node --check static/landing.js
+node --check tests/live_frontend.cjs
+python3 -m py_compile run_flow.py
 ```
 
-Node.js 18+ is optional for the JavaScript handler test; without it, that one test is skipped. The application itself uses Python's standard library and does not require Node.
+Node.js 18+ enables JavaScript handler/API checks. The normal Python app does not require Node. `run_flow.py` supports macOS/Linux and needs a configured local app; see LIVE_TESTING.md for the command and normal UI actions.

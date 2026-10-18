@@ -192,7 +192,9 @@ class RouteTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception,'GOOGLE_MAPS_API_KEY'):
             router.quote(self.a,self.b,'one',seats=1,start_date=str(today()+dt.timedelta(days=2)),departure_hour=8)
     def test_automatic_pricing_is_computed_by_server(self):
-        app=base.App(self.store,demo_mode=True);app.routes=self.router
+        from app.domain import seed
+        seed(self.store)  # Explicit legacy regression fixtures; not production startup data.
+        app=base.App(self.store,demo_mode=True,seed_data=False);app.routes=self.router
         with self.store.read() as db:user=dict(db.execute("SELECT * FROM users WHERE email='mina@usc.edu'").fetchone())
         body,headers=app.new_session(user);auth={'Cookie':headers['Set-Cookie'].split(';')[0],'X-CSRF-Token':body['csrf']}
         data=dict(role='driver',kind='one',origin=self.a,destination=self.b,departure_hour=8,arrive_by=9,start_date=str(today()+dt.timedelta(days=2)),seats=2,price_cents=1,price_mode='automatic',detour_minutes=10,note='Computed by server')

@@ -30,7 +30,7 @@ def summary(meta, capacity, riders=0):
                 distance_miles=meta['distance_miles'],
                 duration_minutes=meta['duration_minutes'],
                 source='Google Maps', traffic_aware=True,
-                quoted_at=meta['quoted_at'])
+                quoted_at=meta['quoted_at'],departure_time=meta.get('departure_time'))
 
 
 def occurrence_pricing(db, occurrence, party=0):
@@ -51,3 +51,17 @@ def occurrence_pricing(db, occurrence, party=0):
     result = summary(meta, occurrence['capacity'], current if waitlist else projected)
     result['would_waitlist'] = waitlist
     return result
+
+
+def price_status(meta):
+    if isinstance(meta,str):meta=json.loads(meta)
+    if meta.get('mode')=='automatic' and meta.get('model')!=MODEL:
+        return dict(mode='automatic',ready=False,state=meta.get('status','pending'),
+                    notice=meta.get('notice','Google Maps price unavailable.'))
+    return dict(mode='automatic' if meta.get('model')==MODEL else 'manual',ready=True,state='ready')
+
+
+def require_price(occurrence):
+    from .domain import require
+    state=price_status(occurrence['price_meta'])
+    require(state['ready'],state.get('notice','Google Maps price unavailable.'),503)

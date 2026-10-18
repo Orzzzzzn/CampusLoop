@@ -59,7 +59,7 @@ class Routes:
         return result
 
     def google_metrics(self, origin, destination, departure):
-        require(bool(self.google_key),'Automatic pricing is unavailable. Configure GOOGLE_MAPS_API_KEY on the server or choose a manual price.',503)
+        require(bool(self.google_key),'Automatic pricing is unavailable. Configure GOOGLE_MAPS_API_KEY on the server.',503)
         origin,destination=location(origin),location(destination)
         def waypoint(point):
             return {'location':{'latLng':{'latitude':point['lat'],'longitude':point['lon']}}}
@@ -83,7 +83,7 @@ class Routes:
                 result=dict(distance_meters=str(distance),duration_seconds=duration[:-1])
             except Exception:
                 # Never return provider bodies or credentials to the browser.
-                raise Problem(503,'Google Maps route data is unavailable. Retry or choose a manual price.') from None
+                raise Problem(503,'Google Maps route data is unavailable. Check the server configuration and retry.') from None
             self.google_cache={k:v for k,v in self.google_cache.items() if v[0]>time.time()}
             self.google_cache[key]=(time.time()+60,result)
             return result

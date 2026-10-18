@@ -22,29 +22,33 @@ import time
 from urllib.parse import parse_qs, urlsplit
 
 from . import VERSION
+from .demo import seed_walkthrough, seed_scenarios, walkthrough_config
 from .domain import (ROOT, PLACES, Problem, Store, application_views, boolean, can_chat,
     cancel_application, cancel_occurrence, check_password, claim, decide, ensure_open, event,
     hash_password, joined_occurrence, list_notifications, list_trips, mark_notifications_read,
-    now, occupied, promote, public_user, republish_canceled_request, request_ride, require, seed,
+    now, occupied, promote, public_user, republish_canceled_request, request_ride, require,
     text, trip_create, identity_name, private_text, integer)
 from .rag import RAG
 from .places import Places
-from .pricing import occurrence_pricing
+from .pricing import occurrence_pricing, require_price
 from .routes import Routes
+from .live import prepare, accounts_config, GooglePrices
 from .features import my_rides, edit_date, skip_week, rate_person, create_demo, demo_views, release_demo
 
 LOG=logging.getLogger('campusloop')
 
 
 class App:
-    def __init__(self,store,rag=None,demo_mode=None):
+    def __init__(self,store,rag=None,demo_mode=None,*,seed_data=True,routes=None):
         self.store=store
+        self.legacy_fixtures=not seed_data
         self.demo_mode=(os.getenv('DEMO_MODE','1')=='1') if demo_mode is None else demo_mode
-        if self.demo_mode:
-            seed(store)
+        if self.demo_mode and seed_data:prepare(store)
         self.rag=rag or RAG(store)
         self.places=Places(store)
-        self.routes=Routes(store)
+        self.routes=routes or Routes(store)
+        self.google_prices=GooglePrices(store,self.routes)
+        if seed_data:self.google_prices.start()
         self.rates=defaultdict(deque)
         self.lock=threading.Lock()
 
@@ -105,11 +109,15 @@ class App:
         if path=='/api/config' and method=='GET':
             with self.store.read() as db:
                 row=db.execute('SELECT min(trip_date) FROM occurrences WHERE trip_date>=?',(str(now().date()),)).fetchone()
-            return dict(app_name='CampusLoop',version=VERSION,api_version='2.2',demo_mode=self.demo_mode,places=PLACES,time_zone='America/Los_Angeles',default_date=row[0] or str(now().date()),chat_model=self.rag.client.chat_model,embed_model=self.rag.client.embed_model),200,{}
+                walkthrough=walkthrough_config(db) if self.demo_mode and self.legacy_fixtures else None
+                accounts=accounts_config(db) if self.demo_mode else {}
+                start=db.execute("SELECT value FROM app_settings WHERE key='live-rides:v2'").fetchone()
+                start_trip=json.loads(start[0])['routes'].get('class') if start and self.demo_mode else None
+            return dict(app_name='CampusLoop',version=VERSION,api_version='2.2',demo_mode=self.demo_mode,walkthrough=walkthrough,accounts=accounts,demo_start_trip_id=start_trip,pricing=self.google_prices.status(),places=PLACES,time_zone='America/Los_Angeles',default_date=row[0] or str(now().date()),chat_model=self.rag.client.chat_model,embed_model=self.rag.client.embed_model),200,{}
         if path=='/health' and method=='GET':
             with self.store.read() as db:
                 db.execute('SELECT 1')
-            return {'status':'ok','database':'ok','app':'CampusLoop','version':VERSION,'api_version':'2.2'},200,{}
+            return {'status':'ok','database':'ok','app':'CampusLoop','version':VERSION,'api_version':'2.2','google_maps':'configured' if self.routes.google_key else 'missing_key'},200,{}
         if path.startswith('/api/auth/'):
             self.rate(('auth',ip))
         if path=='/api/auth/register' and method=='POST':
@@ -194,9 +202,18 @@ class App:
                 o=joined_occurrence(db,integer(data,'occurrence_id',1,2**53))
                 origin,destination=json.loads(o['origin']),json.loads(o['destination'])
             return self.routes.route(origin,destination),200,{}
+        if path=='/api/pricing/status' and method=='GET':
+            return self.google_prices.status(),200,{}
+        if path=='/api/pricing/retry' and method=='POST':
+            require(user['verified'],'Verify your student email before retrying route prices.',403)
+            require(bool(self.routes.google_key),'Configure GOOGLE_MAPS_API_KEY on the server and restart the app.',503)
+            self.rate(('route-prices',user['id']),2,300)
+            self.google_prices.start()
+            return self.google_prices.status(),202,{}
         if path=='/api/trips' and method=='POST':
-            mode=data.get('price_mode','manual')
+            mode=data.get('price_mode','manual' if self.legacy_fixtures else 'automatic')
             require(mode in ('automatic','manual'),'Choose automatic or manual pricing.')
+            require(self.legacy_fixtures or mode=='automatic','All new rides use Google Maps pricing. Manual prices are no longer available.')
             data=dict(data)
             if mode=='automatic':
                 quote=self.routes.quote(data.get('origin'),data.get('destination'),data.get('kind'),
@@ -207,6 +224,7 @@ class App:
             with self.store.tx() as db:
                 tid=trip_create(db,user,data)
                 first_date=db.execute('SELECT min(trip_date) FROM occurrences WHERE trip_id=?',(tid,)).fetchone()[0]
+            if not self.legacy_fixtures:self.google_prices.start()
             return {'trip_id':tid,'first_date':first_date},201,{}
         if path=='/api/applications' and method=='GET':
             with self.store.read() as db:
@@ -226,7 +244,7 @@ class App:
                 rides=my_rides(db,user,data)
             return {'rides':rides},200,{}
         if path=='/api/demo/scenarios' and method in ('GET','POST'):
-            require(self.demo_mode,'Demo Lab is disabled.',404)
+            require(self.demo_mode and self.legacy_fixtures,'Preset booking fixtures are disabled.',404)
             if method=='POST':
                 self.rate(('demo',user['id']),4,300)
                 with self.store.tx() as db:
@@ -237,7 +255,7 @@ class App:
             return {'scenarios':scenarios},201 if method=='POST' else 200,{}
         match=re.fullmatch(r'/api/demo/scenarios/(\d+)/release',path)
         if match and method=='POST':
-            require(self.demo_mode,'Demo Lab is disabled.',404)
+            require(self.demo_mode and self.legacy_fixtures,'Preset booking fixtures are disabled.',404)
             with self.store.tx() as db:
                 promoted=release_demo(db,user,int(match[1]),integer(data,'application_id',1,2**53))
             return {'promoted_application_ids':promoted},200,{}
@@ -248,14 +266,19 @@ class App:
                 if action=='edit-date': edit_date(db,user,oid,data);result={'ok':True}
                 elif action=='skip-week': result={'skipped_occurrence_ids':skip_week(db,user,oid)}
                 else: result={'rating':rate_person(db,user,oid,data)}
+            if action=='edit-date' and not self.legacy_fixtures:self.google_prices.start()
             return result,200,{}
         match=re.fullmatch(r'/api/occurrences/(\d+)/(request|cancel|activity|messages)',path)
         if match:
             oid,action=int(match[1]),match[2]
             if action=='request' and method=='POST':
                 with self.store.tx() as db:
+                    prior=db.execute('SELECT status FROM applications WHERE occurrence_id=? AND requester_id=?',(oid,user['id'])).fetchone()
+                    reused=bool(prior and prior['status'] in ('pending','waitlisted','confirmed'))
                     aid=request_ride(db,user,oid,data)
-                return {'application_id':aid},201,{}
+                    status=db.execute('SELECT status FROM applications WHERE id=?',(aid,)).fetchone()[0]
+                    trip_id=joined_occurrence(db,oid)['trip_id']
+                return {'application_id':aid,'trip_id':trip_id,'status':status,'already_requested':reused},200 if reused else 201,{}
             if action=='cancel' and method=='POST':
                 with self.store.tx() as db:
                     canceled=cancel_occurrence(db,user,oid)
@@ -292,6 +315,7 @@ class App:
                 occurrence=joined_occurrence(db,application['occurrence_id'])
                 require(user['id'] in (application['requester_id'],occurrence['owner_id']),'This request belongs to another member.',403)
                 projected=occurrence_pricing(db,occurrence,application['party_size'] if application['status'] in ('pending','waitlisted') else 0)
+                if action in ('price','accept','claim'):require_price(occurrence)
                 if action=='price':
                     return dict(pricing=projected,price_cents=application['agreed_price_cents'],party_size=application['party_size']),200,{}
                 if action in ('accept','claim') and projected:
@@ -302,10 +326,11 @@ class App:
                 elif action=='cancel':
                     result={'canceled':True,'promoted_application_ids':cancel_application(db,user,aid)}
                 elif action=='republish':
-                    result=republish_canceled_request(db,user,aid)
+                    result=republish_canceled_request(db,user,aid,google_only=not self.legacy_fixtures)
                 else:
                     claim(db,user,aid);result={'status':'confirmed'}
                 result['pricing']=occurrence_pricing(db,joined_occurrence(db,application['occurrence_id']))
+            if action=='republish' and not self.legacy_fixtures:self.google_prices.start()
             return result,200,{}
         if path=='/api/rag/ask' and method=='POST':
             self.rate(('rag',user['id']),12,300)

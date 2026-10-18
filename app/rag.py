@@ -233,13 +233,14 @@ class RAG:
                 'kind': 'ride',
                 'occurrence_id': r['id'],
             }
+            listed_price='Google price unavailable' if not r.get('pricing_status',{}).get('ready',True) else '$%.2f/passenger' % (r['price_cents']/100)
             source['text'] = (
                 f"Date {r['trip_date']}; role {r['role']}; owner {r['owner_name']}. "
                 f"Pickup {r['origin']['label']} ({r['origin']['mode']}, {r['origin']['radius_miles']} mi). "
                 f"Drop-off {r['destination']['label']} ({r['destination']['mode']}, {r['destination']['radius_miles']} mi). "
                 f"Depart {r['departure_hour']:02}:00; arrive-by {r['arrive_by']:02}:00; "
                 f"seats {r['available_seats']}/{r['capacity']}; "
-                f"${r['price_cents']/100:.2f}/passenger; type {r['kind']}. Note: {r['note']}"
+                f"{listed_price}; type {r['kind']}. Note: {r['note']}"
             )
             docs.append(source)
         return docs

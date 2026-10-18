@@ -14,10 +14,11 @@ import unittest
 import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlsplit
-from app.domain import Store, PLACES, location, overlaps, Problem, check_password, distance_miles, shared_meeting_point
+from app.domain import Store, PLACES, location, overlaps, Problem, check_password, distance_miles, shared_meeting_point, seed
 from app.places import Places
 from app.rag import Ollama, RAG
 from app.server import App, Server
+from app.demo import seed_walkthrough, seed_scenarios
 
 class Client:
     def __init__(self,base):
@@ -38,7 +39,9 @@ class Client:
 class AppTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.store=Store(Path(self.temp.name)/'heky.sqlite3')
-        self.app=App(self.store,demo_mode=True);self.server=Server(('127.0.0.1',0),self.app)
+        seed(self.store)  # Existing behavior regression fixtures.
+        seed_walkthrough(self.store);seed_scenarios(self.store)
+        self.app=App(self.store,demo_mode=True,seed_data=False);self.server=Server(('127.0.0.1',0),self.app)
         self.thread=threading.Thread(target=self.server.serve_forever,kwargs={'poll_interval':.01},daemon=True);self.thread.start()
         self.base='http://127.0.0.1:'+str(self.server.server_port);self.clients={}
         for name in ['jamie','mina','sofia','daniel','leo','ethan']:
@@ -314,6 +317,11 @@ class AppTests(unittest.TestCase):
         for name,client in [('viewer',viewer),('owner',self.clients['mina'])]:
             me=client.call('/api/me')[1]
             sessions[name]={'cookie':'; '.join(cookie.name+'='+cookie.value for cookie in client.jar),'csrf':client.csrf,'user':me['user']}
+        walkthrough=self.clients['jamie'].call('/api/config')[1]['walkthrough']
+        for name in ['kate','yelyn','hannah','emily','noah']:
+            c=Client(self.base);code,result=c.call('/api/auth/login',{'email':walkthrough[name+'_email'],'password':'heky-local-2026'})
+            self.assertEqual(code,200,result);c.csrf=result['csrf'];me=c.call('/api/me')[1]
+            sessions[name]={'cookie':'; '.join(cookie.name+'='+cookie.value for cookie in c.jar),'csrf':c.csrf,'user':me['user']}
         root=Path(__file__).resolve().parents[1]
         payload=dict(base=self.base,sessions=sessions,js=str(root/'static/app.js'),date=self.date,places=PLACES)
         result=subprocess.run(['node',str(root/'tests/frontend_contract.cjs')],input=json.dumps(payload),text=True,capture_output=True,timeout=35)

@@ -21,12 +21,13 @@ def recommend(ride, criteria):
     target=criteria.get('departure_hour',criteria.get('departure_from'))
     timing=25/(1+abs(ride['departure_hour']-target)/2) if target is not None else 12.5
     price=15/(1+ride['price_cents']/500) if ride['role']=='driver' else 15*ride['price_cents']/(500+ride['price_cents'])
+    if not ride.get('pricing_status',{}).get('ready',True):price=7.5
     rating=ride['owner_rating']; reputation=2*rating['average'] if rating['count'] else 5
     available=10 if ride['available_seats'] else 0
     reasons=[]
     if distances: reasons.append('Pickup and drop-off proximity' if len(distances)==2 else 'Selected location proximity')
     if target is not None: reasons.append('Departure close to your selected time')
-    reasons.extend(['Lower listed cost share' if ride['role']=='driver' else 'Higher offered rider budget', 'Seats available' if available else 'Full; approved waitlist required'])
+    reasons.extend(['Google price pending' if not ride.get('pricing_status',{}).get('ready',True) else 'Lower listed cost share' if ride['role']=='driver' else 'Higher offered rider budget', 'Seats available' if available else 'Full; approved waitlist required'])
     if rating['count']: reasons.append(f"{rating['average']:.1f}/5 from {rating['count']} {rating['role']} ratings")
     return dict(score=round(route+timing+price+reputation+available),reasons=reasons,
         explanation='Route 40, time 25, price 15, role rating 10, availability 10. Unselected route/time and unrated members receive neutral scores.')
@@ -69,10 +70,11 @@ def rate_person(db,user,oid,data):
 def my_rides(db,user,criteria=None):
     criteria=criteria or {}; scope=criteria.get('scope','upcoming')
     require(scope in ('upcoming','past','all'),'Choose upcoming, past, or all rides.')
-    filters={k:v for k,v in criteria.items() if k in ('date','date_from','date_to','departure_from','departure_to') and v not in ('',None)}
+    filters={k:v for k,v in criteria.items() if k in ('date','date_from','date_to','departure_from','departure_to','trip_id') and v not in ('',None)}
     if scope in ('past','all') and not filters.get('date'):
         filters.setdefault('date_from','2000-01-01');filters['_include_past']=True
     if scope=='past' and not filters.get('date'): filters.setdefault('date_to',str(today()))
+    filters['_include_retired']=scope in ('past','all')
     rides=[]
     for r in list_trips(db,user['id'],filters):
         o=joined_occurrence(db,r['id']);driver,riders,confirmed=participants(db,o)
@@ -114,7 +116,7 @@ def my_rides(db,user,criteria=None):
             "SELECT count(*) FROM applications WHERE occurrence_id=? AND status='pending'",
             (r['id'],),
         ).fetchone()[0] if r['my_role']=='pending' else 0
-        r['can_edit_date']=r['is_owner'] and r['kind']=='regular' and not r['departed'] and not db.execute("SELECT 1 FROM applications WHERE occurrence_id=? AND status IN ('pending','waitlisted','confirmed')",(r['id'],)).fetchone()
+        r['can_edit_date']=not r['price_meta'].get('retired_setup') and r['is_owner'] and r['kind']=='regular' and not r['departed'] and not db.execute("SELECT 1 FROM applications WHERE occurrence_id=? AND status IN ('pending','waitlisted','confirmed')",(r['id'],)).fetchone()
         rides.append(r)
     return rides
 
@@ -151,7 +153,10 @@ def edit_date(db,user,oid,data):
     require(not db.execute("SELECT 1 FROM applications WHERE occurrence_id=? AND status IN ('pending','waitlisted','confirmed')",(oid,)).fetchone(),'This date already has requests. Skip this date and post a replacement so everyone can agree to the new terms.',409)
     departure=integer(data,'departure_hour',0,22);arrival=integer(data,'arrive_by',departure+1,23)
     require(dt.datetime.combine(date_value(o['trip_date']),dt.time(departure),ZONE)>now(),'Departure must be in the future.')
-    override=dict(departure_hour=departure,arrive_by=arrival,note=str(data.get('note','')).strip())
+    override=json.loads(o['overrides'])
+    override.update(departure_hour=departure,arrive_by=arrival,note=str(data.get('note','')).strip())
+    if json.loads(o['price_meta']).get('mode')=='automatic':
+        override.update(price_cents=0,price_meta=dict(mode='automatic',status='pending',notice='Waiting for a Google Maps route quote for the changed departure.'))
     require(len(override['note'])<=1000,'Notes must be at most 1000 characters.')
     db.execute('UPDATE occurrences SET overrides=? WHERE id=?',(json.dumps(override),oid))
     event(db,oid,user['id'],'Departure and notes changed for this date only.')
