@@ -71,6 +71,7 @@ From the extracted folder:
 cp .env.example .env
 # Edit .env and set GOOGLE_MAPS_API_KEY.
 docker compose up --build -d
+# or: make up
 ```
 
 Open port 8010. Set `HEKY_PORT=8011` in `.env` if needed. Port 8000 is internal. `HEKY_PORT`, `heky_data`, the database filename and old cookie support are compatibility identifiers; the product is CampusLoop. Updating an existing app under a different Compose project can select a different database, so use the updater for an existing installation.
@@ -83,6 +84,22 @@ docker compose down
 ```
 
 Stopping with `down` retains data/model volumes. Initial Ollama model download needs internet; search and booking do not use a cloud model key. No payments are collected.
+
+## Reset to a fresh demo database
+
+Compose keeps ride data in the `heky_data` Docker volume. Older Jamie/Mina/Sofia fixtures and half-finished bookings can stay in that volume across rebuilds, which makes Incoming look empty when a request was actually sent to a retired legacy post.
+
+For a clean Kate → Yelyn → Hannah → Emily run (zero applications, only the five demo accounts and ten prepared offers):
+
+```bash
+make reset-demo
+```
+
+That stops the app, deletes **only** `*_heky_data` volumes (Ollama models are kept), rebuilds, and lets startup seed Kate/Yelyn/Hannah/Emily/Noah again. Hard-refresh the browser afterward (`Cmd+Shift+R`).
+
+`docker compose down` alone does **not** wipe the database. Do not use `docker compose down -v` unless you also intend to delete downloaded Ollama models.
+
+On an existing volume, startup also marks legacy Jamie/Mina/Sofia/Daniel/Leo/Ethan posts as retired so they leave Find a ride; `make reset-demo` is still the reliable way to clear bookings and start the scripted demo from zero.
 
 ## Use the actual app
 
@@ -98,16 +115,20 @@ With `DEMO_MODE=1`, five local login accounts are available:
 
 Default password: **heky-local-2026**. `DEMO_PASSWORD` applies only when a new local account is created. Existing accounts, passwords and profile edits are preserved; email collisions create separate `.demo` accounts shown on the sign-in screen. Use separate browser profiles/private windows for each person.
 
-Prepared posts cover ten routes with recurring, one-time, round-trip, one-seat and two-seat offers, plus a rider request. They are ordinary stored offers, not canned booking states. The first class offer is Wilshire / Vermont Station → USC Downey Way, Tuesdays at 13:00, two passenger seats, four dates. No applications are inserted at startup. See **[LIVE_TESTING.md](LIVE_TESTING.md)** for exact live steps and alternate branches.
+Prepared posts cover ten routes with recurring, one-time, round-trip, one-seat and two-seat offers, plus a rider request. They are ordinary stored offers, not canned booking states. The first class offer is Wilshire / Vermont Station → USC Downey Way, Tuesdays at 13:00, two passenger seats, four dates. No applications are inserted at startup. Find a ride hides past dates and defaults to **Recommended** order; a Sort control under the One-time / Recurring tabs also offers Earliest departure, Nearest places and Lowest price. Round trips show outbound and return departure times. My rides and Requests always list soonest dates first. See **[LIVE_TESTING.md](LIVE_TESTING.md)** for exact live steps and alternate branches.
 
-1. Kate uses her existing offer, or posts a recurring ride with an explicit start/end period, Tuesdays at 13:00, capacity two and Google Maps pricing.
-2. Yelyn requests the whole recurring period once. Kate opens Accept recurring period, reviews all date prices, and confirms once. All available Tuesdays are booked automatically.
-3. Hannah requests the same period once. Kate approves once; both seats are confirmed across the dates with capacity.
-4. Emily requests the period once. Kate approves once; full dates appear as approved waitlists, grouped under My waitlist. Waitlisted parties are excluded from confirmed-rider pricing.
-5. Yelyn selects the first date in My rides and chooses Can't make this week. Emily promotes into that week's opened seat; later bookings and waitlists stay unchanged. No second-Tuesday request is needed.
+Use the green **Tuesday class commute · 1 PM** banner (or Kate’s Wilshire / Vermont → USC Downey Way recurring card) so every rider joins the same post.
+
+1. Kate uses that existing offer (Google price must be ready before booking).
+2. Yelyn requests the whole recurring period once. Under **Requests → Incoming**, Kate chooses **Accept recurring period**, reviews all date prices, and confirms once. Available Tuesdays confirm automatically.
+3. Hannah requests the same period once. Kate accepts once; both seats fill on dates with capacity.
+4. Emily requests the same period once. Until Kate accepts, Emily stays **pending** in Kate’s Incoming (not yet on the waitlist). After Kate accepts: open-seat dates confirm Emily; full dates become an **approved waitlist** under Emily’s **My waitlist**. Waitlisted parties do not occupy seats or affect confirmed-rider pricing.
+5. Yelyn selects the first date in My rides and chooses Can’t make this week. Emily promotes into that week’s opened seat when auto-confirm is on; later bookings and waitlists stay unchanged.
 6. Kate can skip another week without canceling the entire series. A requester can separately choose Cancel remaining recurring dates to leave the rest of the period.
 
-Requests and approvals cover the **remaining recurring period**. Repeated joins reuse the enrollment and its date applications without changing queue times or reopening weekly cancellations. Requests shows one group per recurring request and provides a per-date breakdown/filter. Sent and My waitlist have disjoint statuses; different dates in one series can legitimately be confirmed and waitlisted. My rides shows individual dates for weekly exceptions. One-time and round-trip requests retain their one-date behavior.
+If Kate’s Incoming has no Emily request, Emily joined a different post (or the DB still has leftover bookings). Run `make reset-demo`, then repeat from step 2 on the Tuesday class banner offer.
+
+Requests and approvals cover the **remaining recurring period**. Repeated joins reuse the enrollment without changing queue times or reopening weekly cancellations. Requests groups one card per recurring request. Sent and My waitlist use disjoint outgoing statuses. My rides lists individual dates soonest-first for weekly exceptions. One-time and round-trip requests retain their one-date behavior.
 
 ## Start or perform the flow through the actual API
 
@@ -121,7 +142,7 @@ Then sign in as Yelyn and request a seat. Kate accepts; Hannah can request the s
 
 ## Existing data and the recurring upgrade
 
-A fresh local setup starts at Kate's Tuesday 13:00 offer: two passenger seats, four dates, zero applications. Other prepared posts are also unbooked. Updating an already-used 2.4.1 installation retains its current demo progress; this release does not reset it again.
+A fresh local setup (or `make reset-demo`) starts at Kate's Tuesday 13:00 offer: two passenger seats, four dates, zero applications. Other prepared posts are also unbooked. Updating an already-used installation with `upgrade.py` retains its current demo progress and does not wipe the volume; use `make reset-demo` when you need a clean slate.
 
 A one-time migration groups pre-upgrade future recurring requests by post and requester. Existing pending requests are extended as pending across the remaining period. Existing confirmed/driver-approved waitlist requests carry that approval forward, confirming dates with seats and waitlisting dates that are full. Existing confirmed rows keep their identities, timestamps and original stored agreements. Explicitly canceled weeks, past dates and canceled offers stay unchanged. The migration waits for Google prices and runs again when quote loading succeeds. If old party/meeting terms conflict across dates or a competing driver already holds a date, existing terms are retained for review.
 
@@ -146,7 +167,7 @@ Google traffic-aware estimates use each date's scheduled America/Los_Angeles dep
 
 Search a named place/address and explicitly select a result. Choose Exact place or a 0.1–10 mile Nearby area independently at either end. Normal post/search locations start empty. Pickup areas and drop-off areas must both overlap when both filters are selected. Geographic ranges are straight-line flexibility, separate from road distance and traffic. Cards show names/ranges, not editable coordinates. Online Photon geocoding, Leaflet/OpenStreetMap tiles and OSRM preview geometry need internet. Map previews remain explicitly labelled OSRM and are separate from Google's pricing metrics.
 
-Use role, date, departure hour and recurring/one-time tabs to browse. My rides separates driving, confirmed passenger and still-pending posts, with date and time filters. Departure until, advanced schedule filters and user-entered arrival deadlines remain removed. Times use whole hours in America/Los_Angeles.
+Use role, date, departure hour, and recurring/one-time tabs to browse. Sort rides with Recommended, Earliest departure, Nearest places or Lowest price under those tabs. My rides separates driving, confirmed passenger and still-pending posts, with date and time filters, always soonest-first. Departure until, advanced schedule filters and user-entered arrival deadlines remain removed. Times use whole hours in America/Los_Angeles. Round-trip cards and requests show outbound and return hours.
 
 Unconfirmed students appear as stable aliases. Confirmed partners see real names and driver information for that date. Approved waitlisted parties may auto-confirm when enough seats open, or explicitly claim if they opted out of automation. Parties are never split. An owner can edit departure/notes for one unrequested date or cancel a date/week; later weeks remain unchanged. Drivers and confirmed passengers can rate each other after the completion window, one editable 1–5 star vote per partner/date. Chat is limited to confirmed participants and the owner.
 
