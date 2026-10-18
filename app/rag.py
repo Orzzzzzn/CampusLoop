@@ -11,9 +11,7 @@ import threading
 import urllib.error
 import urllib.request
 
-from .errors import Problem
-from .paths import ROOT
-from .rides import list_trips
+from .domain import ROOT, Problem, list_trips
 
 
 class Ollama:
@@ -103,7 +101,7 @@ class RAG:
                 f"Drop-off: {r['destination']['label']} ({r['destination']['mode']}, radius {r['destination']['radius_miles']} miles). "
                 f"Departure: {r['departure_hour']:02}:00; arrival deadline: {r['arrive_by']:02}:00 (a requested deadline, not a traffic ETA). "
                 f"Passenger capacity/party size: {r['capacity']}; currently available seats: {r['available_seats']}. "
-                f"Driver confirmed: {bool(r['driver_id'])}; cost-share amount/budget: ${r['price_cents']/100:.2f}; "
+                f"Driver confirmed: {bool(r['driver_id'])}; cost-share amount/budget: ${r['price_cents']/100:.2f} per passenger per booked date (both legs for round trips); "
                 f"listed detour limit: {r['detour_minutes']} minutes (not a computed road detour). "
                 f"Type: {r['kind']}; return hour: {r['return_hour']}. Note supplied by the owner: {r['note']}")
             docs.append(source)
