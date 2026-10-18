@@ -28,7 +28,7 @@ async function as(who,page='browse',tab='incoming'){principal=who;app.user=input
  await run('boot')();assert(app.user,'Boot must retain the authenticated API session');assert.equal(app.page,'home');assert(select('#app').innerHTML.includes('Share the route.'));await run('navigate')('browse');
  assert.equal(app.config.version,'2.2.0');assert.equal(app.boardRole,'all');assert.equal(new Set(app.rides.map(r=>r.role)).size,2);assert(new Set(app.rides.map(r=>r.trip_date)).size>1);
  assert(app.rides.every(r=>!r.identity_revealed&&r.owner_name.startsWith('Loop Member ')),'A fresh student sees only aliases');
- let html=select('#app').innerHTML;assert(html.includes('Ask CampusLoop.'));assert(html.includes('Regular rides'));assert(html.includes('One-time & round trips'));assert(!/[\uac00-\ud7a3]/.test(html));assert(!/sample pin|latitude|longitude/i.test(html));
+ let html=select('#app').innerHTML;assert(html.includes('Ask CampusLoop.'));assert(html.includes('Recurring rides'));assert(html.includes('One-time & round trips'));assert(!/[\uac00-\ud7a3]/.test(html));assert(!/sample pin|latitude|longitude/i.test(html));
  const blank=run('locationFields')('origin',null,true,false);assert(blank.includes('value=""'));assert(!blank.includes('Wilshire'));assert(!blank.includes('disabled'));assert(!/name="origin_(lat|lon)"/.test(blank));
  const postForm=form('post-form',{origin_label:'USC',origin_resolved:'',origin_mode:'area',origin_radius:1});
  await run('searchPlace')(postForm,'origin');assert.equal(postForm.elements.origin_resolved.value,'','Searching does not select a place automatically');
@@ -51,7 +51,7 @@ async function as(who,page='browse',tab='incoming'){principal=who;app.user=input
  // My rides must preserve selected dates, distinguish the actual driving role, and render agreed terms.
  await as('viewer','rides');await click(button({myRole:'rider'}));
  let rideHtml=select('#app').innerHTML;assert(rideHtml.includes('Your confirmed driver'));assert(rideHtml.includes('Mina Park'));assert(rideHtml.includes('Toyota Prius'));assert(rideHtml.includes('Agreed cost share'));assert(rideHtml.includes('>MP</span>'));assert(!rideHtml.includes('>CL<'));
- assert(rideHtml.includes('Regular rides'));assert(rideHtml.includes('One-time &amp; round trips')||rideHtml.includes('One-time & round trips'));
+ assert(rideHtml.includes('Recurring rides'));assert(rideHtml.includes('One-time &amp; round trips')||rideHtml.includes('One-time & round trips'));
  const myFilter=form('my-filter-form',{date:'2000-01-01',scope:'all',departure_from:'',departure_to:''});
  await run('handleChange')({target:{form:myFilter,id:'my-date'}});assert.equal(app.myDate,'2000-01-01');assert.equal(app.myRides.length,0);
  myFilter.elements.date.value=input.date;myFilter.elements.scope.value='upcoming';myFilter.elements.departure_from.value=8;myFilter.elements.departure_to.value=8;await submit(myFilter);assert(app.myRides.some(r=>r.id===ride.id));assert(app.myRides.every(r=>r.trip_date===input.date&&r.departure_hour===8));
@@ -66,12 +66,12 @@ async function as(who,page='browse',tab='incoming'){principal=who;app.user=input
  await click(button({application:String(waiting.id),action:'claim'}));assert.equal(app.scenarios.find(s=>s.id===manual.id).members.find(m=>m.is_you).status,'confirmed');
  const history=app.scenarios.find(s=>s.title.startsWith('5.'));await click(button({labRides:history.trip_date}));
  const past=app.myRides.find(r=>r.id===history.occurrence_id);assert(past.completed);assert.equal(app.myRole,'rider');assert(past.rating_targets.length);
- await click(button({rate:String(past.id),subject:String(past.rating_targets[0].id)}));assert(select('#modal-content').innerHTML.includes('Rate your driver'));
+ await click(button({rate:String(past.id),subject:String(past.rating_targets[0].id)}));assert(select('#modal-content').innerHTML.includes('How was this ride?'));
  const ratingForm=form('rating-form',{stars:5});ratingForm.dataset={occurrence:String(past.id),subject:String(past.rating_targets[0].id)};await submit(ratingForm);assert.equal(app.myRides.find(r=>r.id===past.id).rating_targets[0].stars,5);
  // Owner controls must submit one-date and one-week exceptions through the visible handlers.
  await as('owner');post.elements.kind.value='regular';post.elements.end_date.value=new Date(new Date(input.date+'T12:00:00Z').getTime()+14*86400000).toISOString().slice(0,10);post.elements.weekdays.value=[0,1,2,3,4,5,6];post.elements.note.value='Node recurring exception example';await submit(post);
  const regular=app.rides.find(r=>r.note==='Node recurring exception example');assert(regular);
- app.myDate=regular.trip_date;app.myRole='driver';app.myScope='all';app.myFrom='';app.myTo='';await run('navigate')('rides');assert(select('#app').innerHTML.includes('Change this date only'));
+ app.myDate=regular.trip_date;app.myRole='driver';app.myScope='all';app.myKind='regular';app.myFrom='';app.myTo='';await run('navigate')('rides');assert(select('#app').innerHTML.includes('Change this date only'));
  await click(button({editDate:String(regular.id)}));assert(select('#modal-content').innerHTML.includes('Change this recurring date only'));
  const exception=form('exception-form',{departure_hour:10,arrive_by:11,note:'Changed this date'});exception.dataset.occurrence=String(regular.id);await submit(exception);assert.equal(app.myRides.find(r=>r.id===regular.id).departure_hour,10);
  await click(button({skipWeek:String(regular.id)}));assert(select('#modal-content').innerHTML.includes('Skip this week only?'));await click(button({skipWeek:String(regular.id)},['data-confirmed']));assert(!app.myRides.some(r=>r.id===regular.id));

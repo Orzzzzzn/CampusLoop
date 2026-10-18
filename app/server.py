@@ -23,9 +23,10 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import VERSION
 from .domain import (ROOT, PLACES, Problem, Store, application_views, boolean, can_chat,
-    cancel_application, check_password, claim, decide, ensure_open, event, hash_password,
-    joined_occurrence, list_trips, now, occupied, promote, public_user, request_ride,
-    require, seed, text, trip_create, identity_name, private_text, integer)
+    cancel_application, cancel_occurrence, check_password, claim, decide, ensure_open, event,
+    hash_password, joined_occurrence, list_notifications, list_trips, mark_notifications_read,
+    now, occupied, promote, public_user, republish_canceled_request, request_ride, require, seed,
+    text, trip_create, identity_name, private_text, integer)
 from .rag import RAG
 from .places import Places
 from .routes import Routes
@@ -208,6 +209,15 @@ class App:
             with self.store.read() as db:
                 rows=application_views(db,user)
             return {'applications':rows},200,{}
+        if path=='/api/notifications' and method=='GET':
+            with self.store.read() as db:
+                notes=list_notifications(db,user)
+            unread=sum(1 for n in notes if not n['read'])
+            return {'notifications':notes,'unread':unread},200,{}
+        if path=='/api/notifications/read' and method=='POST':
+            with self.store.tx() as db:
+                mark_notifications_read(db,user,data.get('ids'))
+            return {'ok':True},200,{}
         if (path=='/api/my-rides' and method=='GET') or (path=='/api/my-rides/search' and method=='POST'):
             with self.store.read() as db:
                 rides=my_rides(db,user,data)
@@ -245,13 +255,8 @@ class App:
                 return {'application_id':aid},201,{}
             if action=='cancel' and method=='POST':
                 with self.store.tx() as db:
-                    o=joined_occurrence(db,oid)
-                    require(o['owner_id']==user['id'],'Only the post owner can cancel the entire ride date.',403)
-                    ensure_open(o)
-                    db.execute("UPDATE occurrences SET status='canceled',driver_id=NULL WHERE id=?",(oid,))
-                    db.execute("UPDATE applications SET status='canceled' WHERE occurrence_id=? AND status IN ('pending','confirmed','waitlisted')",(oid,))
-                    event(db,oid,user['id'],'The owner canceled this ride date. No other dates were changed.')
-                return {'ok':True},200,{}
+                    canceled=cancel_occurrence(db,user,oid)
+                return {'ok':True,'canceled_application_ids':canceled},200,{}
             if action=='activity' and method=='GET':
                 with self.store.read() as db:
                     can_chat(db,user,oid)
@@ -274,7 +279,7 @@ class App:
                         message['name'],message['identity_revealed']=identity_name(db,user['id'],message.pop('subject_id'),oid)
                         message['body']=private_text(db,message['body'],user['id'],oid)
                 return {'messages':messages},200,{}
-        match=re.fullmatch(r'/api/applications/(\d+)/(accept|decline|cancel|claim)',path)
+        match=re.fullmatch(r'/api/applications/(\d+)/(accept|decline|cancel|claim|republish)',path)
         if match and method=='POST':
             aid,action=int(match[1]),match[2]
             with self.store.tx() as db:
@@ -282,6 +287,8 @@ class App:
                     result={'status':decide(db,user,aid,action=='accept')}
                 elif action=='cancel':
                     result={'canceled':True,'promoted_application_ids':cancel_application(db,user,aid)}
+                elif action=='republish':
+                    result=republish_canceled_request(db,user,aid)
                 else:
                     claim(db,user,aid);result={'status':'confirmed'}
             return result,200,{}
