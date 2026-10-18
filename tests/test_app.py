@@ -133,6 +133,32 @@ class AppTests(unittest.TestCase):
         self.assertTrue(notes['unread']>=1);self.assertTrue(any(n['kind']=='driver_canceled' for n in notes['notifications']))
         canceled=next(a for a in self.clients['jamie'].call('/api/applications')[1]['applications'] if a['id']==first)
         self.assertTrue(canceled['owner_canceled'])
+        self.assertEqual(canceled['owner_name'],'Mina Park')
+        self.assertTrue(canceled['identity_revealed'])
+        self.assertTrue(canceled['was_matched'])
+        self.assertEqual(canceled['cancel_reason'],'owner_matched')
+        # Never-matched pending cancel still lists the owner by name on this card only.
+        pending_ride=self.create(note='Pending cancel identity')
+        pending=self.apply('ethan',pending_ride)
+        self.assertEqual(self.clients['mina'].call(f"/api/occurrences/{pending_ride['id']}/cancel",{})[0],200)
+        pending_view=next(a for a in self.clients['ethan'].call('/api/applications')[1]['applications'] if a['id']==pending)
+        self.assertTrue(pending_view['owner_canceled'])
+        self.assertEqual(pending_view['owner_name'],'Mina Park')
+        self.assertEqual(pending_view['cancel_reason'],'owner')
+        self.assertFalse(pending_view['was_matched'])
+        # Republish removes the canceled Sent row and posts an open rider request.
+        code,published=self.clients['jamie'].call(f'/api/applications/{first}/republish',{})
+        self.assertEqual(code,200,published)
+        sent=[a for a in self.clients['jamie'].call('/api/applications')[1]['applications'] if a['id']==first]
+        self.assertEqual(sent,[])
+        code,mine=self.clients['jamie'].call('/api/my-rides/search',{'date':published['trip_date']})
+        self.assertEqual(code,200,mine)
+        pending_mine=next(r for r in mine['rides'] if r['id']==published['occurrence_id'])
+        self.assertEqual(pending_mine['my_role'],'pending')
+        self.assertEqual(pending_mine['role'],'rider')
+        board=next(r for r in self.search('ethan',date=published['trip_date']) if r['id']==published['occurrence_id'])
+        self.assertEqual(board['role'],'rider')
+        self.assertFalse(board['identity_revealed'])
 
     def test_concurrent_manual_claims_have_one_winner(self):
         ride=self.create();first=self.apply('jamie',ride);one=self.apply('leo',ride,auto=False);two=self.apply('ethan',ride,auto=False)

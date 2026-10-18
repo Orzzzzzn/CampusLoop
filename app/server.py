@@ -25,8 +25,8 @@ from . import VERSION
 from .domain import (ROOT, PLACES, Problem, Store, application_views, boolean, can_chat,
     cancel_application, cancel_occurrence, check_password, claim, decide, ensure_open, event,
     hash_password, joined_occurrence, list_notifications, list_trips, mark_notifications_read,
-    now, occupied, promote, public_user, request_ride, require, seed, text, trip_create,
-    identity_name, private_text, integer)
+    now, occupied, promote, public_user, republish_canceled_request, request_ride, require, seed,
+    text, trip_create, identity_name, private_text, integer)
 from .rag import RAG
 from .places import Places
 from .routes import Routes
@@ -279,7 +279,7 @@ class App:
                         message['name'],message['identity_revealed']=identity_name(db,user['id'],message.pop('subject_id'),oid)
                         message['body']=private_text(db,message['body'],user['id'],oid)
                 return {'messages':messages},200,{}
-        match=re.fullmatch(r'/api/applications/(\d+)/(accept|decline|cancel|claim)',path)
+        match=re.fullmatch(r'/api/applications/(\d+)/(accept|decline|cancel|claim|republish)',path)
         if match and method=='POST':
             aid,action=int(match[1]),match[2]
             with self.store.tx() as db:
@@ -287,6 +287,8 @@ class App:
                     result={'status':decide(db,user,aid,action=='accept')}
                 elif action=='cancel':
                     result={'canceled':True,'promoted_application_ids':cancel_application(db,user,aid)}
+                elif action=='republish':
+                    result=republish_canceled_request(db,user,aid)
                 else:
                     claim(db,user,aid);result={'status':'confirmed'}
             return result,200,{}

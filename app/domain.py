@@ -201,7 +201,7 @@ class Store:
                 'users': [('is_demo_fixture','INTEGER NOT NULL DEFAULT 0')],
                 'trips': [('price_meta',"TEXT NOT NULL DEFAULT '{}'")],
                 'occurrences': [('overrides',"TEXT NOT NULL DEFAULT '{}'")],
-                'applications': [('agreed_price_cents','INTEGER'), ('cancel_reason','TEXT')],
+                'applications': [('agreed_price_cents','INTEGER'), ('cancel_reason','TEXT'), ('matched','INTEGER NOT NULL DEFAULT 0')],
             }.items():
                 columns={r['name'] for r in db.execute('PRAGMA table_info('+table+')')}
                 for name, declaration in additions:
@@ -209,6 +209,25 @@ class Store:
                         db.execute('ALTER TABLE '+table+' ADD COLUMN '+name+' '+declaration)
             db.execute('''UPDATE applications SET agreed_price_cents=(SELECT t.price_cents FROM occurrences o JOIN trips t ON t.id=o.trip_id WHERE o.id=applications.occurrence_id) WHERE agreed_price_cents IS NULL''')
             db.execute("INSERT OR IGNORE INTO app_settings(key,value) VALUES('identity_salt',?)",(secrets.token_hex(32),))
+            db.execute("UPDATE applications SET matched=1 WHERE status='confirmed'")
+            # Upgrade legacy cancel reasons so previously matched pairs keep names on request cards.
+            for row in db.execute(
+                "SELECT id,cancel_reason,matched FROM applications WHERE status='canceled' AND cancel_reason IN ('owner','requester')"
+            ).fetchall():
+                confirmed=row['matched'] or db.execute(
+                    "SELECT 1 FROM events WHERE occurrence_id=(SELECT occurrence_id FROM applications WHERE id=?) AND message=?",
+                    (row['id'], f"Request #{row['id']} confirmed."),
+                ).fetchone()
+                if not confirmed:
+                    # Seeded confirmed bookings had no decide() event; chat proves a prior match.
+                    confirmed=db.execute(
+                        "SELECT 1 FROM messages WHERE occurrence_id=(SELECT occurrence_id FROM applications WHERE id=?)",
+                        (row['id'],),
+                    ).fetchone()
+                if not confirmed:
+                    continue
+                upgraded='owner_matched' if row['cancel_reason']=='owner' else 'requester_matched'
+                db.execute('UPDATE applications SET cancel_reason=?,matched=1 WHERE id=?',(upgraded,row['id']))
         # Remove the old display suffix from stored locations without changing
         # coordinates, bookings, names, passwords, or other account data.
         with self.tx() as db:
@@ -318,7 +337,7 @@ def promote(db, o):
     promoted = []
     for a in db.execute("SELECT a.*,u.name FROM applications a JOIN users u ON u.id=a.requester_id WHERE occurrence_id=? AND status='waitlisted' AND auto_confirm=1 ORDER BY created_at,id", (o['id'],)).fetchall():
         if a['party_size'] <= free:
-            db.execute("UPDATE applications SET status='confirmed' WHERE id=? AND status='waitlisted'", (a['id'],))
+            db.execute("UPDATE applications SET status='confirmed',matched=1 WHERE id=? AND status='waitlisted'", (a['id'],))
             free -= a['party_size']
             promoted.append(a['id'])
             event(db, o['id'], a['requester_id'], a['name']+' automatically confirmed from the approved waitlist.')
@@ -532,7 +551,10 @@ def decide(db,user,aid,accept):
         db.execute("UPDATE applications SET status='declined' WHERE occurrence_id=? AND id<>? AND status='pending'",(o['id'],aid))
     else:
         status='confirmed' if occupied(db,o['id'])+a['party_size']<=o['capacity'] else 'waitlisted'
-    db.execute('UPDATE applications SET status=? WHERE id=?',(status,aid))
+    if status=='confirmed':
+        db.execute("UPDATE applications SET status='confirmed',matched=1 WHERE id=?",(aid,))
+    else:
+        db.execute('UPDATE applications SET status=? WHERE id=?',(status,aid))
     event(db,o['id'],user['id'],'Request #'+str(aid)+' '+status+'.')
     return status
 
@@ -545,7 +567,9 @@ def cancel_application(db,user,aid):
     ensure_open(o)
     require(a['status'] in ('pending','waitlisted','confirmed'),'This request is already inactive.',409)
     prior=a['status']
-    db.execute("UPDATE applications SET status='canceled',cancel_reason='requester' WHERE id=?",(aid,))
+    matched=prior=='confirmed' or bool(a['matched'])
+    reason='requester_matched' if matched else 'requester'
+    db.execute("UPDATE applications SET status='canceled',cancel_reason=? WHERE id=?",(reason,aid))
     if o['role']=='rider' and prior=='confirmed':
         db.execute('UPDATE occurrences SET driver_id=NULL WHERE id=?',(o['id'],))
         # Reopen other driver offers so the rider request appears active again.
@@ -617,10 +641,14 @@ def cancel_occurrence(db, user, oid):
         (oid,),
     ).fetchall()]
     db.execute("UPDATE occurrences SET status='canceled',driver_id=NULL WHERE id=?",(oid,))
-    db.execute(
-        "UPDATE applications SET status='canceled',cancel_reason='owner' WHERE occurrence_id=? AND status IN ('pending','confirmed','waitlisted')",
-        (oid,),
-    )
+    for a in affected:
+        row=db.execute('SELECT matched FROM applications WHERE id=?',(a['id'],)).fetchone()
+        matched=a['status']=='confirmed' or bool(row['matched'] if row else 0)
+        reason='owner_matched' if matched else 'owner'
+        db.execute(
+            "UPDATE applications SET status='canceled',cancel_reason=? WHERE id=?",
+            (reason, a['id']),
+        )
     event(db,oid,user['id'],'The owner canceled this ride date. No other dates were changed.')
     trip_label=f"{o['trip_date']} · {o['departure_hour']:02}:00"
     for a in affected:
@@ -631,6 +659,46 @@ def cancel_occurrence(db, user, oid):
             occurrence_id=oid, application_id=a['id'],
         )
     return [a['id'] for a in affected]
+
+
+def republish_canceled_request(db, user, aid):
+    """Turn a driver-canceled request into the rider's own open post (Still pending)."""
+    a=db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone()
+    require(a is not None,'Request not found.',404)
+    require(a['requester_id']==user['id'],'Only the requesting student can republish this ride.',403)
+    require(a['status']=='canceled' and (a['cancel_reason'] or '').startswith('owner'),
+            'Only a driver-canceled request can be published again this way.',409)
+    o=joined_occurrence(db,a['occurrence_id'])
+    origin=json.loads(a['meeting_origin'])
+    destination=json.loads(a['meeting_destination'])
+    for point in (origin,destination):
+        point['mode']=point.get('mode') or 'exact'
+        point['radius_miles']=0 if point['mode']=='exact' else float(point.get('radius_miles') or 1)
+    kind=o['kind'] if o['kind'] in ('one','round') else 'one'
+    departure=int(o['departure_hour'])
+    arrive_by=int(o['arrive_by'])
+    if arrive_by<=departure:
+        arrive_by=min(23,departure+1)
+    price=a['agreed_price_cents'] if a['agreed_price_cents'] is not None else o['price_cents']
+    detour=db.execute('SELECT detour_minutes FROM trips WHERE id=?',(o['trip_id'],)).fetchone()
+    note=(o.get('note') or '').strip()
+    if note:
+        note='Looking for a new driver. '+note
+    else:
+        note='Looking for a driver after a previous CampusLoop was canceled.'
+    tid=trip_create(db,user,dict(
+        role='rider',kind=kind,origin=origin,destination=destination,
+        start_date=o['trip_date'],end_date=o['trip_date'],
+        departure_hour=departure,arrive_by=arrive_by,weekdays=[],
+        seats=a['party_size'],price_cents=price,
+        detour_minutes=detour['detour_minutes'] if detour else 10,
+        note=note[:1000],return_hour=o['return_hour'] if kind=='round' else None,
+        _price_meta={'mode':'republished','from_application_id':aid},
+    ))
+    db.execute("UPDATE applications SET cancel_reason='republished' WHERE id=?",(aid,))
+    oid=db.execute('SELECT id FROM occurrences WHERE trip_id=? ORDER BY trip_date LIMIT 1',(tid,)).fetchone()[0]
+    event(db,oid,user['id'],user['name']+' republished this route after a driver cancel.')
+    return dict(trip_id=tid,occurrence_id=oid,trip_date=o['trip_date'],kind=kind)
 
 
 def claim(db,user,aid):
@@ -644,7 +712,7 @@ def claim(db,user,aid):
     if db.execute('SELECT status FROM applications WHERE id=?',(aid,)).fetchone()[0]=='confirmed':
         return
     require(occupied(db,o['id'])+a['party_size']<=o['capacity'],'No seat is open for your party.',409)
-    db.execute("UPDATE applications SET status='confirmed' WHERE id=?",(aid,))
+    db.execute("UPDATE applications SET status='confirmed',matched=1 WHERE id=?",(aid,))
     event(db,o['id'],user['id'],user['name']+' confirmed an open waitlist seat.')
 
 
@@ -660,7 +728,8 @@ def application_views(db,user):
         t.departure_hour,t.origin,t.destination,t.price_cents,owner.name AS owner_name
         FROM applications a JOIN users u ON u.id=a.requester_id JOIN occurrences o ON o.id=a.occurrence_id
         JOIN trips t ON t.id=o.trip_id JOIN users owner ON owner.id=t.owner_id
-        WHERE a.requester_id=? OR t.owner_id=? ORDER BY a.created_at DESC,a.id DESC''',(user['id'],user['id'])).fetchall()
+        WHERE (a.requester_id=? OR t.owner_id=?) AND coalesce(a.cancel_reason,'')!='republished'
+        ORDER BY a.created_at DESC,a.id DESC''',(user['id'],user['id'])).fetchall()
     result=[]
     for row in rows:
         r=dict(row)
@@ -678,10 +747,20 @@ def application_views(db,user):
         r['incoming']=r['owner_id']==user['id']
         r['requester_name'],requester_revealed=identity_name(db,user['id'],r['requester_id'],r['occurrence_id'])
         r['owner_name'],owner_revealed=identity_name(db,user['id'],r['owner_id'],r['occurrence_id'])
+        r['cancel_reason']=r.get('cancel_reason')
+        r['owner_canceled']=r['status']=='canceled' and (r.get('cancel_reason') or '').startswith('owner')
+        # Keep real names on request cards after a match (or any owner-date cancel). Browse stays anonymous.
+        was_matched=bool(r.get('matched')) or (r.get('cancel_reason') in ('owner_matched','requester_matched')) or r['status']=='confirmed'
+        keep_names=was_matched or r['owner_canceled']
+        if keep_names:
+            owner_row=db.execute('SELECT name FROM users WHERE id=?',(r['owner_id'],)).fetchone()
+            requester_row=db.execute('SELECT name FROM users WHERE id=?',(r['requester_id'],)).fetchone()
+            r['owner_name']=owner_row['name'] if owner_row else r['owner_name']
+            r['requester_name']=requester_row['name'] if requester_row else r['requester_name']
+            requester_revealed=owner_revealed=True
         r['identity_revealed']=requester_revealed if r['incoming'] else owner_revealed
         r['closed']=r['occurrence_status']!='active' or dt.datetime.combine(date_value(r['trip_date']),dt.time(r['departure_hour']),ZONE)<=now()
-        r['cancel_reason']=r.get('cancel_reason')
-        r['owner_canceled']=r['status']=='canceled' and r.get('cancel_reason')=='owner'
+        r['was_matched']=was_matched
         result.append(r)
     return result
 
@@ -727,11 +806,14 @@ def seed(store):
                 point['mode'] = 'exact'
                 point['radius_miles'] = 0
             agreed = price if price is not None else o['price_cents']
-            db.execute(
-                '''INSERT INTO applications(occurrence_id,requester_id,status,party_size,auto_confirm,meeting_origin,meeting_destination,created_at,agreed_price_cents)
-                   VALUES(?,?,?,?,?,?,?,?,?)''',
-                (oid, ids[who], status, party, int(auto), json.dumps(pickup), json.dumps(dropoff), now().timestamp(), agreed),
-            )
+            matched = 1 if status == 'confirmed' else 0
+            aid = db.execute(
+                '''INSERT INTO applications(occurrence_id,requester_id,status,party_size,auto_confirm,meeting_origin,meeting_destination,created_at,agreed_price_cents,matched)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)''',
+                (oid, ids[who], status, party, int(auto), json.dumps(pickup), json.dumps(dropoff), now().timestamp(), agreed, matched),
+            ).lastrowid
+            if status == 'confirmed':
+                event(db, oid, ids[who], f'Request #{aid} confirmed.')
             if status == 'confirmed' and o['role'] == 'rider':
                 db.execute('UPDATE occurrences SET driver_id=? WHERE id=?', (ids[who], oid))
 
