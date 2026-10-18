@@ -1,8 +1,12 @@
-# CampusLoop 2.4.1
+# CampusLoop 2.5.0
 
 CampusLoop is a Python / SQLite carpool app with a shared landing page, place-and-radius matching, recurring rides, waitlists, Google traffic-aware pricing and a local RAG assistant. Python 3.11+ is required; no third-party Python packages are needed.
 
 ## This release
+
+Recurring rides display their published start date, end date and weekdays. **One request covers every remaining future active date in that period; one owner approval confirms every available date and approves the waitlist on full dates.** No weekly reapplication or approval is needed. Prices, capacity, identities and weekly exceptions remain date-specific. Recurring offers and requests are grouped in the board and Requests; My rides keeps individual dates for cancellations.
+
+Existing active recurring requests are extended once during upgrade: pending requests stay pending until owner approval; already confirmed or approved-waitlist requests keep that approval for remaining dates. Canceled weeks are preserved. The extension waits for valid Google prices on all dates and retains conflicting legacy terms for review rather than overwriting agreements. Past records, accounts and passwords are retained.
 
 There is no Ride example selector, lettered scenario label or preset-booking page. Local accounts operate the normal app. Ten prepared posts start with **zero applications**: riders must request, owners must accept, and participants must cancel through the actual API and database.
 
@@ -12,10 +16,10 @@ The landing page explains why the service helps drivers and riders, Post → Req
 
 ## Update the existing app on port 8010
 
-Extract this archive to `~/Downloads/CampusLoop-2.4.1`, start Docker Desktop and run:
+Extract this archive to `~/Downloads/CampusLoop-2.5.0`, start Docker Desktop and run:
 
 ```bash
-python3 ~/Downloads/CampusLoop-2.4.1/upgrade.py --port 8010
+python3 ~/Downloads/CampusLoop-2.5.0/upgrade.py --port 8010
 ```
 
 This preserves the running Compose project, database, accounts, passwords, mounts and existing key/settings. It updates the actual build folder, backs up source files and replaces bundled guidance while retaining custom documents. It rebuilds only the app and verifies the actual served backend, HTML, JavaScript, CSS and landing assets. Source backups are not database backups.
@@ -23,8 +27,8 @@ This preserves the running Compose project, database, accounts, passwords, mount
 If the old Compose folder has moved or disappeared:
 
 ```bash
-python3 ~/Downloads/CampusLoop-2.4.1/upgrade.py \
-  --compose-dir ~/Downloads/CampusLoop-2.4.1 --port 8010
+python3 ~/Downloads/CampusLoop-2.5.0/upgrade.py \
+  --compose-dir ~/Downloads/CampusLoop-2.5.0 --port 8010
 ```
 
 Recovery retains the exact live database and app environment in a private Compose configuration. Ambiguous containers, unpersisted databases and code bind mounts hiding the new release stop before recreation. `--dry-run` inspects without updating. No volume deletion or Docker prune is used.
@@ -35,22 +39,22 @@ Open [http://127.0.0.1:8010](http://127.0.0.1:8010) and refresh with **Cmd+Shift
 curl http://127.0.0.1:8010/health
 ```
 
-Expect CampusLoop 2.4.1 and database ok. `google_maps: configured` means a server key is present; it does not establish that Google accepted the key or returned a route. Successful priced cards show the Google distance/time and current contribution.
+Expect CampusLoop 2.5.0 and database ok. `google_maps: configured` means a server key is present; it does not establish that Google accepted the key or returned a route. Successful priced cards show the Google distance/time and current contribution.
 
 ## Apply a Google key to an existing installation
 
 If a key is already configured on the running container, the updater keeps it. Otherwise create a local `.env` in this extracted release folder and fill in `GOOGLE_MAPS_API_KEY`:
 
 ```bash
-cd ~/Downloads/CampusLoop-2.4.1
+cd ~/Downloads/CampusLoop-2.5.0
 cp .env.example .env
 ```
 
 Edit `.env`, enable Routes API and billing for that key's Google Cloud project, then run:
 
 ```bash
-python3 ~/Downloads/CampusLoop-2.4.1/upgrade.py --port 8010 \
-  --google-env ~/Downloads/CampusLoop-2.4.1/.env
+python3 ~/Downloads/CampusLoop-2.5.0/upgrade.py --port 8010 \
+  --google-env ~/Downloads/CampusLoop-2.5.0/.env
 ```
 
 `--google-env` explicitly applies **only** that file's `GOOGLE_MAPS_API_KEY`, using a private Compose override outside the source folder. It works even when the installation uses a retained recovery configuration. It checks that the recreated container received the key while retaining the original database. It does not print the key, replace other environment values or copy `.env` into the image. An absent/empty key stops before updating.
@@ -96,32 +100,34 @@ Default password: **heky-local-2026**. `DEMO_PASSWORD` applies only when a new l
 
 Prepared posts cover ten routes with recurring, one-time, round-trip, one-seat and two-seat offers, plus a rider request. They are ordinary stored offers, not canned booking states. The first class offer is Wilshire / Vermont Station → USC Downey Way, Tuesdays at 13:00, two passenger seats, four dates. No applications are inserted at startup. See **[LIVE_TESTING.md](LIVE_TESTING.md)** for exact live steps and alternate branches.
 
-1. Kate can use her existing class offer, or Post a ride with Google Maps pricing, a Tuesday 13:00 recurring schedule and capacity two.
-2. Yelyn requests one date. Kate accepts under Requests → Incoming after reviewing the Google-derived current price.
-3. Hannah requests that same date. Kate accepts; both seats are confirmed and the per-person price updates.
-4. Emily requests that full date. Kate approves the request; it moves from Sent to My waitlist and does not count as a confirmed passenger.
-5. Yelyn selects that date in My rides and chooses Can't make this week. Emily promotes into the opened seat, with the current price and Kate's driver information. Other weeks stay unchanged. Book a second Tuesday as well to verify this directly.
-6. Kate's week cancellation affects the whole offer date, including its waitlist; no one promotes into a canceled ride. Other weeks remain active.
+1. Kate uses her existing offer, or posts a recurring ride with an explicit start/end period, Tuesdays at 13:00, capacity two and Google Maps pricing.
+2. Yelyn requests the whole recurring period once. Kate opens Accept recurring period, reviews all date prices, and confirms once. All available Tuesdays are booked automatically.
+3. Hannah requests the same period once. Kate approves once; both seats are confirmed across the dates with capacity.
+4. Emily requests the period once. Kate approves once; full dates appear as approved waitlists, grouped under My waitlist. Waitlisted parties are excluded from confirmed-rider pricing.
+5. Yelyn selects the first date in My rides and chooses Can't make this week. Emily promotes into that week's opened seat; later bookings and waitlists stay unchanged. No second-Tuesday request is needed.
+6. Kate can skip another week without canceling the entire series. A requester can separately choose Cancel remaining recurring dates to leave the rest of the period.
 
-Requests and approvals are **date-specific**. Sending once does not subscribe someone to every recurring date. Repeated active retries reuse the same application without changing queue time, status, price or events. Submit/decision actions are protected while in flight. Sent and My waitlist have disjoint outgoing statuses; tab switches fetch current state. Requests has a date filter.
+Requests and approvals cover the **remaining recurring period**. Repeated joins reuse the enrollment and its date applications without changing queue times or reopening weekly cancellations. Requests shows one group per recurring request and provides a per-date breakdown/filter. Sent and My waitlist have disjoint statuses; different dates in one series can legitimately be confirmed and waitlisted. My rides shows individual dates for weekly exceptions. One-time and round-trip requests retain their one-date behavior.
 
-## Run the complete flow through the actual API
+## Start or perform the flow through the actual API
 
 The app starts with Kate's existing offer, **zero applications and no canceled dates**. Open Find a ride and use **Tuesday class commute → View ride offer**. This command only shows that initial offer; it does not create bookings:
 
 ```bash
-python3 ~/Downloads/CampusLoop-2.4.1/run_flow.py --base http://127.0.0.1:8010
+python3 ~/Downloads/CampusLoop-2.5.0/run_flow.py --base http://127.0.0.1:8010
 ```
 
 Then sign in as Yelyn and request a seat. Kate accepts; Hannah can request the second seat and Emily can join the approved waitlist. Perform each action in the ordinary app. To explicitly execute the entire sequence automatically on a separate new post, add `--perform-sequence`. That option creates real requests, confirmations and a cancellation; omit it when beginning the presentation.
 
-## Existing data and the clean demo start
+## Existing data and the recurring upgrade
 
-The first 2.4.1 startup archives the tracked older generated demo offers and the exact old runner-generated post signature. Their application rows, agreed amounts, messages and passwords stay in the database. Archived demo records and notifications no longer appear in normal lists, including All dates. Ten fresh ordinary posts have zero applications; the Tuesday 13:00 offer has two passenger seats and four dates. The reset happens once, so restarting does not undo actions performed during the presentation.
+A fresh local setup starts at Kate's Tuesday 13:00 offer: two passenger seats, four dates, zero applications. Other prepared posts are also unbooked. Updating an already-used 2.4.1 installation retains its current demo progress; this release does not reset it again.
 
-Other users' posts remain. All of their upcoming active dates receive a Google quote in a per-date override, including dates with existing requests; displayed current contributions follow the Google formula and confirmed passenger count. Original stored agreement amounts and historical/canceled dates are retained. Pending or failed quotes suppress old manual amounts and prevent new confirmations until pricing succeeds. No database volume is deleted, and account passwords/profiles are unchanged.
+A one-time migration groups pre-upgrade future recurring requests by post and requester. Existing pending requests are extended as pending across the remaining period. Existing confirmed/driver-approved waitlist requests carry that approval forward, confirming dates with seats and waitlisting dates that are full. Existing confirmed rows keep their identities, timestamps and original stored agreements. Explicitly canceled weeks, past dates and canceled offers stay unchanged. The migration waits for Google prices and runs again when quote loading succeeds. If old party/meeting terms conflict across dates or a competing driver already holds a date, existing terms are retained for review.
 
-The old preset-booking endpoints and `python -m app.demo --reset` are disabled in the production app. They cannot recreate fixed $4 or preconfirmed setup records. Legacy helper functions remain only for isolated regression fixtures.
+New date-specific requests made after the upgrade are not reinterpreted by that migration. The production UI's normal recurring request covers the period; My rides still provides individual-date and week cancellations. **Cancel remaining recurring dates** withdraws all the requester's pending, confirmed and waitlisted future dates on that post, with a separate confirmation dialog. Repeated joins/approvals/withdrawals do not create duplicates or reopen canceled weeks. No database volume is deleted and account passwords/profiles are unchanged.
+
+Earlier generated preset offers remain archived from normal views. Their database history is retained. The old fixture endpoints/reset CLI stay disabled.
 
 ## Pricing
 

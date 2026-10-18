@@ -165,6 +165,13 @@ CREATE TABLE IF NOT EXISTS embeddings (
  PRIMARY KEY(content_hash,model)
 );
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS recurring_requests (
+ id INTEGER PRIMARY KEY, trip_id INTEGER NOT NULL REFERENCES trips(id),
+ requester_id INTEGER NOT NULL REFERENCES users(id), status TEXT NOT NULL,
+ party_size INTEGER NOT NULL, auto_confirm INTEGER NOT NULL,
+ meeting_origin TEXT NOT NULL, meeting_destination TEXT NOT NULL, created_at REAL NOT NULL,
+ UNIQUE(trip_id,requester_id)
+);
 CREATE TABLE IF NOT EXISTS place_cache (cache_key TEXT PRIMARY KEY, results TEXT NOT NULL, expires REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS ratings (
  id INTEGER PRIMARY KEY, occurrence_id INTEGER NOT NULL REFERENCES occurrences(id),
@@ -201,7 +208,7 @@ class Store:
                 'users': [('is_demo_fixture','INTEGER NOT NULL DEFAULT 0')],
                 'trips': [('price_meta',"TEXT NOT NULL DEFAULT '{}'")],
                 'occurrences': [('overrides',"TEXT NOT NULL DEFAULT '{}'")],
-                'applications': [('agreed_price_cents','INTEGER'), ('cancel_reason','TEXT'), ('matched','INTEGER NOT NULL DEFAULT 0')],
+                'applications': [('agreed_price_cents','INTEGER'), ('cancel_reason','TEXT'), ('matched','INTEGER NOT NULL DEFAULT 0'), ('recurring_id','INTEGER REFERENCES recurring_requests(id)')],
             }.items():
                 columns={r['name'] for r in db.execute('PRAGMA table_info('+table+')')}
                 for name, declaration in additions:
@@ -464,7 +471,7 @@ def list_trips(db, actor_id, criteria=None):
     query='''SELECT o.*,t.owner_id,t.role,t.origin,t.destination,t.departure_hour,t.arrive_by,t.kind,t.weekdays,t.start_date,t.end_date,t.price_cents,t.price_meta,t.detour_minutes,t.note,t.return_hour,u.name AS owner_name,u.vehicle
         FROM occurrences o JOIN trips t ON t.id=o.trip_id JOIN users u ON u.id=t.owner_id WHERE '''+ ' AND '.join(clauses)
     rows=db.execute(query,args).fetchall()
-    output=[]
+    output=[];schedules={}
     origin_filter=location(criteria['origin']) if criteria.get('origin') else None
     dest_filter=location(criteria['destination']) if criteria.get('destination') else None
     for raw in rows:
@@ -474,6 +481,10 @@ def list_trips(db, actor_id, criteria=None):
         from .pricing import price_status
         r['pricing_status']=price_status(r['price_meta'])
         r['origin'],r['destination'],r['weekdays']=json.loads(r['origin']),json.loads(r['destination']),json.loads(r['weekdays'])
+        if r['kind']=='regular':
+            from .recurring import schedule
+            if r['trip_id'] not in schedules:schedules[r['trip_id']]=schedule(db,r['trip_id'])
+            r['recurring_schedule']=schedules[r['trip_id']]
         if criteria.get('role') in ('driver','rider') and r['role']!=criteria['role']:
             continue
         if origin_filter and not overlaps(origin_filter,r['origin']):
@@ -499,7 +510,7 @@ def list_trips(db, actor_id, criteria=None):
         from .pricing import occurrence_pricing
         r['pricing']=occurrence_pricing(db,r)
         r['available_seats']=max(0,r['capacity']-r['confirmed_seats']) if r['role']=='driver' else (0 if r['driver_id'] else r['capacity'])
-        own=db.execute('SELECT id,status,party_size,agreed_price_cents FROM applications WHERE occurrence_id=? AND requester_id=?',(r['id'],actor_id)).fetchone()
+        own=db.execute('SELECT id,status,party_size,agreed_price_cents,recurring_id,(SELECT status FROM recurring_requests WHERE id=applications.recurring_id) AS recurring_status FROM applications WHERE occurrence_id=? AND requester_id=?',(r['id'],actor_id)).fetchone()
         r['application']=dict(own) if own else None
         r['is_owner']=r['owner_id']==actor_id
         r['owner_name'],r['identity_revealed']=identity_name(db,actor_id,r['owner_id'],r['id'])
@@ -762,7 +773,7 @@ def application_views(db,user):
         JOIN trips t ON t.id=o.trip_id JOIN users owner ON owner.id=t.owner_id
         WHERE (a.requester_id=? OR t.owner_id=?) AND coalesce(a.cancel_reason,'')!='republished'
         ORDER BY a.created_at DESC,a.id DESC''',(user['id'],user['id'])).fetchall()
-    result=[]
+    result=[];series_cache={}
     for row in rows:
         r=dict(row)
         effective=joined_occurrence(db,r['occurrence_id'])
@@ -800,6 +811,10 @@ def application_views(db,user):
         r['identity_revealed']=requester_revealed if r['incoming'] else owner_revealed
         r['closed']=r['occurrence_status']!='active' or dt.datetime.combine(date_value(r['trip_date']),dt.time(r['departure_hour']),ZONE)<=now()
         r['was_matched']=was_matched
+        if r['recurring_id']:
+            from .recurring import series_info
+            if r['recurring_id'] not in series_cache:series_cache[r['recurring_id']]=series_info(db,r['recurring_id'])
+            r['series']=series_cache[r['recurring_id']]
         result.append(r)
     return result
 

@@ -102,7 +102,7 @@ def prepare(store):
 class GooglePrices:
     """Price every upcoming occurrence, including existing user posts and exceptions."""
     def __init__(self,store,routes):
-        self.store=store;self.routes=routes;self.lock=threading.Lock();self.running=False;self.thread=None;self.rescan=False
+        self.store=store;self.routes=routes;self.lock=threading.Lock();self.running=False;self.thread=None;self.rescan=False;self.on_complete=None
 
     def upcoming(self,db):
         from .domain import joined_occurrence
@@ -173,6 +173,9 @@ class GooglePrices:
                         from .domain import promote
                         promote(db,joined_occurrence(db,ride['id']))
         finally:
-            with self.lock:
-                self.running=False;again=self.rescan;self.rescan=False
-            if again:self.start()
+            try:
+                if self.on_complete:self.on_complete()
+            finally:
+                with self.lock:
+                    self.running=False;again=self.rescan;self.rescan=False
+                if again:self.start()

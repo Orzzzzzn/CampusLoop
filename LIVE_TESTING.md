@@ -10,29 +10,30 @@ Use separate browser profiles/private windows for Kate, Yelyn, Hannah, Emily and
 
 ## Begin at Kate's offer
 
-After the update, open Find a ride → **Tuesday class commute · 1 PM → View ride offer**. The offer is Wilshire / Vermont Station → USC Downey Way, every Tuesday at 13:00, two passenger seats, four dates. No rider has requested, confirmed, joined a waitlist or canceled. All other prepared routes also start unbooked. The one-time migration archives the earlier generated demo state; later restarts keep actions you perform.
+For a fresh setup, open Find a ride → **Tuesday class commute · 1 PM → View ride offer**. The offer is Wilshire / Vermont Station → USC Downey Way, every Tuesday at 13:00, two passenger seats, four dates. No rider has requested, confirmed, joined a waitlist or canceled. All other prepared routes also start unbooked. The earlier demo migration stays one-time. This update retains existing progress and extends eligible old recurring bookings across their remaining period; restarts keep actions you perform.
 
 This optional command only reports the initial offer and its saved Google price. It never creates a request, confirmation or cancellation:
 
 ```bash
-python3 ~/Downloads/CampusLoop-2.4.1/run_flow.py --base http://127.0.0.1:8010
+python3 ~/Downloads/CampusLoop-2.5.0/run_flow.py --base http://127.0.0.1:8010
 ```
 
 For an explicitly automated execution on a separate new post, use `--perform-sequence`. It performs real requests, acceptance and a weekly cancellation through ordinary APIs; it intentionally leaves the state after Yelyn cancels, so do not use that option before a presentation that starts at Kate's offer. Its private state file makes repeated executions resume/show the same sequence; `--new` is available only with `--perform-sequence`.
 
 ## Kate, Yelyn, Hannah and Emily
 
-1. **Kate posts:** either use the existing Wilshire / Vermont Station → USC Downey Way offer or create a new post. To create one, select Driver, choose pickup/drop-off, Recurring, the next Tuesday at 13:00, Tuesdays through three weeks later, two passenger seats and Google Maps pricing. Review the Google-derived estimate and publish. Use the same post consistently afterward; a new post is distinct from an existing offer on that route.
-2. **Yelyn requests:** browse Rides offered → Recurring rides, select the first Tuesday and 13:00, then select the intended route/post. Review meeting points and the quoted range, request one seat, and leave auto-confirm checked. The request is pending in Sent; Kate stays anonymous to Yelyn.
-3. **Kate accepts:** open Requests → Incoming, filter that date and accept Yelyn's request. Review current price and confirm again in the price dialog. It becomes a real confirmed booking. Yelyn now sees Kate and her Honda Civic in My rides → Confirmed passenger.
-4. **Hannah joins:** Hannah requests the same post/date for one passenger. Kate accepts after price review. Two passenger seats are occupied; the driver is excluded. With base B, driver earnings are 1.65B and each rider pays 0.825B.
-5. **Emily waits:** Emily opens the now-full date and requests a waitlist spot. Kate approves the request. It appears once under Emily's My waitlist; before approval it was pending in Sent. Emily is excluded from rider-count pricing until confirmed.
-6. **Prepare next week:** repeat Yelyn, Hannah and Emily's request/approval steps for the following Tuesday if you want to compare weekly isolation. Each date has separate bookings, its own Google traffic-aware quote and a separate queue.
-7. **Yelyn cancels this week:** in Yelyn's My rides → Confirmed passenger → Regular rides, filter the first Tuesday and choose Can't make this week. Confirm. Only Yelyn's bookings on this post in that Monday–Sunday week are canceled. Emily promotes into the one opened seat; Hannah stays booked. The next Tuesday's bookings and waitlist stay unchanged.
-8. **Emily checks:** open My rides to fetch current state. Emily now sees Kate's real name/vehicle, the first date and the current Google-derived price. That date leaves My waitlist. With Hannah still riding, n remains two and each rider still pays 0.825B.
-9. **Kate cancels a week:** on another booked Tuesday, Kate uses My rides → You're driving → Regular rides → Can't make this week. That whole date and all its applications are canceled. No passenger promotes into a canceled offer. Other weeks stay active.
+1. **Kate's offer:** use Wilshire / Vermont Station → USC Downey Way, Tuesdays at 13:00, two passenger seats. The card shows the full start/end period. A new offer needs a chosen period and weekdays. Wait until every scheduled date has a Google quote.
+2. **Yelyn requests once:** open the offer, review the published period, all remaining dates, Google price ranges and exact meeting proposal. Choose **Request recurring period** for one passenger. This requests all future active dates within the period, including future dates earlier than a selected search/card date. A date filter does not narrow the enrollment period. Kate stays anonymous until confirmation.
+3. **Kate accepts once:** Requests → Incoming groups the recurring request into one card. Choose **Accept recurring period**. The review lists each date's projected price and Confirm/Waitlist outcome. Choose **Confirm recurring period** once. Yelyn is confirmed on every available date; full dates are approved waitlists. My rides → Confirmed passenger shows every confirmed date and Kate's name/vehicle.
+4. **Hannah joins once:** Hannah requests the same period and Kate approves it once. On each date with two confirmed passengers, driver earnings are 1.65B and each passenger pays 0.825B, using that date's Google base B.
+5. **Emily waits:** Emily requests the period once and Kate approves once. Full dates are grouped under My waitlist; expand View dates to inspect them. Before approval they appear in Sent, not My waitlist. Waitlisted passengers are excluded from the pricing count until confirmation.
+6. **Inspect later weeks:** Yelyn and Hannah already have bookings on the other Tuesdays, and Emily is already waitlisted there. No additional request/approval is needed. Requests → travel date and My rides → travel date filter the saved dates without changing the recurring enrollment.
+7. **Yelyn skips this week:** My rides → Confirmed passenger → Recurring rides → choose the first Tuesday → Can't make this week. Only that Monday–Sunday week's bookings on this post are canceled. Emily promotes only into the opened date; Hannah stays booked. Later weeks remain confirmed/waitlisted. Retrying the original request does not undo the weekly cancellation.
+8. **Emily checks:** the promoted date appears in My rides with Kate's name/vehicle and its current Google-derived contribution. The remaining dates stay waitlisted. Requests shows the counts and date breakdown; it does not create duplicate recurring requests.
+9. **Kate skips another week:** My rides → You're driving → Recurring rides → choose another Tuesday → Can't make this week. That week and its applications are canceled. No waitlist promotes into a canceled offer; other weeks remain intact.
+10. **End the entire period:** a requester can choose **Cancel remaining recurring dates** under Requests or My rides. The confirmation explicitly distinguishes this from skipping one week. Past records stay stored; future pending/confirmed/waitlisted applications are canceled and eligible replacement parties can promote.
 
-Switching Requests tabs or opening My rides fetches current server state after another account acts. Use the date filters to distinguish recurring dates. One request on each of two Tuesdays means two legitimate applications, not a duplicate.
+Each action uses normal application APIs and database transactions. All-date approval rechecks the complete date list, Google prices, rider counts and capacity. If any date changed since review, the app requires another review before changing any pending dates. One-time and round-trip requests continue to cover one booked date (both legs for a round trip).
 
 ## Other routes and branches to perform
 
@@ -45,7 +46,7 @@ Every route below starts without applications. Set up its state using the same R
 | Wilshire / Vermont Station → USC Village, one-time 11:00 | 2 | Confirm Yelyn + Hannah; leave Emily pending. Cancel Yelyn: Emily must stay pending until Kate approves. Alternatively decline and let Emily reapply |
 | Memorial Park Station → USC Village, one-time 14:00 | 1 | Confirm Yelyn; approve Hannah before Emily while full. Cancel Yelyn: Hannah promotes first. Cancel Hannah: Emily promotes next |
 | Santa Monica Public Library → USC Leavey Library, one-time 10:00 | 2 | Confirm Yelyn + Hannah with one seat each. Emily requests a party of two, then Noah requests one; Kate approves both waitlists. Cancel Yelyn: only Noah fits. Cancel Hannah, then Noah: Emily's whole party can finally confirm together |
-| Memorial Park Station → USC Downey Way, Tuesdays 13:00 | 2 | Book two weeks with passengers and a waitlist, then Kate cancels only the first week. Later bookings remain unchanged |
+| Memorial Park Station → USC Downey Way, Tuesdays 13:00 | 2 | Join/approve the whole period once with passengers and a waitlist, then Kate cancels only the first week. Later bookings remain unchanged |
 | USC Village ↔ Santa Monica Public Library, outbound 08:00 / return 17:00 | 2 | Confirm two passengers and approve a third waitlist. Cancel one: replacement is one booking covering both legs; Google pricing includes both route directions |
 | Wilshire / Western Station → USC Village, one-time 16:00 | 1 | Confirm Yelyn; approve Emily before Hannah. Emily withdraws, reapplies and receives approval again. Cancel Yelyn: Hannah now has earlier queue priority |
 | USC Leavey Library → Wilshire / Vermont Station, Yelyn's rider post at 15:00 | Party of 2 | Kate and Noah each offer to drive. Yelyn accepts one; the other offer declines. The confirmed driver cancels; the other offer becomes pending again |

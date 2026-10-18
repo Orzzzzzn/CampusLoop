@@ -2784,3 +2784,5 @@ nav {
 #ride-results {
   scroll-margin-top: 24px
 }
+
+.recurring-period{display:flex;flex-direction:column;gap:5px;margin:12px 0;padding:12px 14px;border-left:3px solid #588268;background:#edf3eb;color:#234132;font-size:13px}.recurring-period span{font-size:12px;line-height:1.5}.series-dates{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px;text-align:left}.series-dates th,.series-dates td{padding:9px 7px;border-bottom:1px solid #d5dfd2;vertical-align:top}.series-dates th{background:#edf3eb;color:#234132}.series-dates td{line-height:1.5}

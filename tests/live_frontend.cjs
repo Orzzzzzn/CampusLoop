@@ -25,7 +25,7 @@ const button=(dataset,attributes=[])=>({dataset,hasAttribute:name=>attributes.in
 const click=async b=>run('handleClick')({target:{closest(){return b}}});
 async function as(who,page='browse',tab='incoming'){principal=who;app.user=input.sessions[who].user;app.csrf=input.sessions[who].csrf;app.page=page;app.requestTab=tab;app.criteria={};app.boardRole='all';await run('refresh')()}
 (async()=>{
- await run('boot')();assert.equal(app.config.version,'2.4.1');
+ await run('boot')();assert.equal(app.config.version,'2.5.0');
  const landing=select('#app').innerHTML;
  for(const title of ['Why do we need this service?','How it works','How can we take it further?','Google Maps Routes API','0.65','DRIVER EARNINGS PER RIDE'])assert(landing.includes(title));
  assert(!landing.includes('PRODUCT EXAMPLE'));
@@ -50,7 +50,7 @@ async function as(who,page='browse',tab='incoming'){principal=who;app.user=input
  for(const ride of dates.slice(0,2)){
   for(const who of ['yelyn','hannah','emily']){
    await as(who);const current=app.rides.find(r=>r.id===ride.id);assert(current);assert(!current.identity_revealed);
-   const request=form('request-form',{party_size:1,auto_confirm:'on',...locationFields('origin',current.origin,'exact',0),...locationFields('dest',current.destination,'exact',0)});request.dataset.occurrence=String(ride.id);
+   const request=form('request-form',{scope:'date',party_size:1,auto_confirm:'on',...locationFields('origin',current.origin,'exact',0),...locationFields('dest',current.destination,'exact',0)});request.dataset.occurrence=String(ride.id);
    const path=`/api/occurrences/${ride.id}/request`,before=traffic.filter(t=>t.path===path).length;
    await Promise.all([submit(request),submit(request)]);assert.equal(traffic.filter(t=>t.path===path).length-before,1);
    const a=app.applications.find(a=>a.occurrence_id===ride.id);assert(a);ids[ride.id+who]=a.id;assert.equal(a.status,'pending');

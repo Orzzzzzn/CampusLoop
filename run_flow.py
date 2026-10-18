@@ -50,7 +50,7 @@ def perform(base,state_path=None,new=False):
         client=Client(base);client.login(config['accounts'][name],password);clients[name]=client
     kate=clients['kate']
     if not kate.user.get('vehicle'):raise RuntimeError('Kate needs a vehicle in her profile before posting.')
-    token=hashlib.sha256((base+':'+str(kate.user['id'])).encode()).hexdigest()[:20]
+    token=hashlib.sha256((base+':recurring-v1:'+str(kate.user['id'])).encode()).hexdigest()[:20]
     path=Path(state_path).expanduser() if state_path else Path.home()/'.campusloop'/'live-flows'/(token+'.json')
     path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     # macOS/Linux advisory lock keeps two simultaneous invocations from posting twice.
@@ -80,7 +80,13 @@ def perform(base,state_path=None,new=False):
             rides=sorted(rides,key=lambda ride:ride['trip_date'])
             if len(rides)<2:raise RuntimeError('This saved flow no longer has two future ride dates. Continue in the app, or use --new to start another post.')
             if not state['setup_complete']:
-                for ride in rides[:2]:
+                import time
+                for _ in range(160):
+                    if all(r.get('pricing_status',{}).get('ready') for r in rides):break
+                    time.sleep(.25)
+                    rides=sorted(kate.call('/api/rides/search',dict(trip_id=state['trip_id']))['rides'],key=lambda ride:ride['trip_date'])
+                if not all(r.get('pricing_status',{}).get('ready') for r in rides):raise RuntimeError('Some recurring dates have no Google price. Retry pricing in the app before continuing.')
+                for ride in rides[:1]:
                     for name in ('yelyn','hannah','emily'):
                         client=clients[name]
                         existing=next((a for a in client.call('/api/applications')['applications'] if a['occurrence_id']==ride['id']),None)
@@ -92,7 +98,7 @@ def perform(base,state_path=None,new=False):
                             existing=dict(id=requested['application_id'],status=requested['status'])
                         if existing['status']=='pending':
                             quote=kate.call(f"/api/applications/{existing['id']}/price",{})
-                            result=kate.call(f"/api/applications/{existing['id']}/accept",dict(expected_rider_count=quote['pricing']['rider_count']))
+                            result=kate.call(f"/api/applications/{existing['id']}/accept",dict(expected_rider_count=quote['pricing']['rider_count'],expected_series_token=quote.get('series',{}).get('review_token')))
                             print(ride['trip_date']+' · '+name.title()+': '+result['status'],flush=True)
                 state['setup_complete']=True;state['first_occurrence_id']=rides[0]['id'];save(path,state)
             first=next((a for a in clients['yelyn'].call('/api/applications')['applications'] if a['occurrence_id']==state['first_occurrence_id']),None)

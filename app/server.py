@@ -33,6 +33,7 @@ from .places import Places
 from .pricing import occurrence_pricing, require_price
 from .routes import Routes
 from .live import prepare, accounts_config, GooglePrices
+from .recurring import enroll, series_info, approve, withdraw, prepare_upgrade, upgrade_existing
 from .features import my_rides, edit_date, skip_week, rate_person, create_demo, demo_views, release_demo
 
 LOG=logging.getLogger('campusloop')
@@ -48,7 +49,11 @@ class App:
         self.places=Places(store)
         self.routes=routes or Routes(store)
         self.google_prices=GooglePrices(store,self.routes)
-        if seed_data:self.google_prices.start()
+        if seed_data:
+            self.google_prices.prepare()
+            prepare_upgrade(store);upgrade_existing(store)
+            self.google_prices.on_complete=lambda:upgrade_existing(store)
+            self.google_prices.start()
         self.rates=defaultdict(deque)
         self.lock=threading.Lock()
 
@@ -275,10 +280,15 @@ class App:
                 with self.store.tx() as db:
                     prior=db.execute('SELECT status FROM applications WHERE occurrence_id=? AND requester_id=?',(oid,user['id'])).fetchone()
                     reused=bool(prior and prior['status'] in ('pending','waitlisted','confirmed'))
-                    aid=request_ride(db,user,oid,data)
+                    occurrence=joined_occurrence(db,oid)
+                    scope=data.get('scope','date' if self.legacy_fixtures else 'series' if occurrence['kind']=='regular' else 'date')
+                    require(scope in ('series','date'),'Invalid request scope.')
+                    sid=None
+                    if scope=='series':aid,sid,reused=enroll(db,user,oid,data)
+                    else:aid=request_ride(db,user,oid,data)
                     status=db.execute('SELECT status FROM applications WHERE id=?',(aid,)).fetchone()[0]
                     trip_id=joined_occurrence(db,oid)['trip_id']
-                return {'application_id':aid,'trip_id':trip_id,'status':status,'already_requested':reused},200 if reused else 201,{}
+                return {'application_id':aid,'trip_id':trip_id,'status':status,'already_requested':reused,'recurring_id':sid},200 if reused else 201,{}
             if action=='cancel' and method=='POST':
                 with self.store.tx() as db:
                     canceled=cancel_occurrence(db,user,oid)
@@ -306,6 +316,10 @@ class App:
                         message['body']=private_text(db,message['body'],user['id'],oid)
                 return {'messages':messages},200,{}
         
+        match=re.fullmatch(r'/api/recurring/(\d+)/withdraw',path)
+        if match and method=='POST':
+            with self.store.tx() as db:result=withdraw(db,user,int(match[1]))
+            return result,200,{}
         match=re.fullmatch(r'/api/applications/(\d+)/(accept|decline|cancel|claim|price|republish)',path)
         if match and method=='POST':
             aid,action=int(match[1]),match[2]
@@ -315,6 +329,12 @@ class App:
                 occurrence=joined_occurrence(db,application['occurrence_id'])
                 require(user['id'] in (application['requester_id'],occurrence['owner_id']),'This request belongs to another member.',403)
                 projected=occurrence_pricing(db,occurrence,application['party_size'] if application['status'] in ('pending','waitlisted') else 0)
+                if application['recurring_id'] and action in ('price','accept','decline'):
+                    info=series_info(db,application['recurring_id'],review=action in ('price','accept'))
+                    if action=='price':return dict(pricing=projected,series=info,price_cents=application['agreed_price_cents'],party_size=application['party_size']),200,{}
+                    info=approve(db,user,application['recurring_id'],action=='accept',data.get('expected_series_token'))
+                    state=db.execute('SELECT status FROM applications WHERE id=?',(aid,)).fetchone()[0]
+                    return dict(status=state,series=info,pricing=occurrence_pricing(db,joined_occurrence(db,application['occurrence_id']))),200,{}
                 if action in ('price','accept','claim'):require_price(occurrence)
                 if action=='price':
                     return dict(pricing=projected,price_cents=application['agreed_price_cents'],party_size=application['party_size']),200,{}

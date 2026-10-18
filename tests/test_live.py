@@ -45,7 +45,7 @@ class LiveTests(unittest.TestCase):
         code,result=self.clients['yelyn'].call('/api/rides/search',dict(trip_id=self.catalog['routes']['class']))
         self.assertEqual(code,200,result);return sorted(result['rides'],key=lambda r:r['trip_date'])
     def request(self,who,ride):
-        data=dict(party_size=1,auto_confirm=True,meeting_origin={**ride['origin'],'mode':'exact','radius_miles':0},meeting_destination={**ride['destination'],'mode':'exact','radius_miles':0})
+        data=dict(scope='date',party_size=1,auto_confirm=True,meeting_origin={**ride['origin'],'mode':'exact','radius_miles':0},meeting_destination={**ride['destination'],'mode':'exact','radius_miles':0})
         code,result=self.clients[who].call(f"/api/occurrences/{ride['id']}/request",data);self.assertEqual(code,201,result);return result['application_id']
     def accept(self,aid):
         code,q=self.clients['kate'].call(f'/api/applications/{aid}/price',{});self.assertEqual(code,200,q)
@@ -248,9 +248,9 @@ class LiveTests(unittest.TestCase):
         result=json.loads(state.read_text());self.assertTrue(result['completed'])
         with self.store.read() as db:
             trips=db.execute('SELECT count(*) FROM trips').fetchone()[0];apps=db.execute('SELECT count(*) FROM applications').fetchone()[0]
-            self.assertEqual(trips,11);self.assertEqual(apps,6)
+            self.assertEqual(trips,11);self.assertEqual(apps,12)
             statuses=[r[0] for r in db.execute('SELECT status FROM applications ORDER BY id')]
-            self.assertCountEqual(statuses,['canceled','confirmed','confirmed','confirmed','confirmed','waitlisted'])
+            self.assertCountEqual(statuses,['canceled']+['confirmed']*8+['waitlisted']*3)
         again=subprocess.run(command,text=True,capture_output=True,timeout=30)
         self.assertEqual(again.returncode,0,again.stdout+'\n'+again.stderr)
         with self.store.read() as db:

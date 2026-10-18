@@ -26,7 +26,7 @@ const click=async b=>run('handleClick')({target:{closest(){return b}}});
 async function as(who,page='browse',tab='incoming'){principal=who;app.user=input.sessions[who].user;app.csrf=input.sessions[who].csrf;app.page=page;app.requestTab=tab;app.criteria={};app.boardRole='all';await run('refresh')()}
 (async()=>{
  await run('boot')();assert(app.user,'Boot must retain the authenticated API session');assert.equal(app.page,'home');assert(select('#app').innerHTML.includes('Share the route.'));await run('navigate')('browse');
- assert.equal(app.config.version,'2.4.1');assert.equal(app.boardRole,'all');assert.equal(new Set(app.rides.map(r=>r.role)).size,2);assert(new Set(app.rides.map(r=>r.trip_date)).size>1);
+ assert.equal(app.config.version,'2.5.0');assert.equal(app.boardRole,'all');assert.equal(new Set(app.rides.map(r=>r.role)).size,2);assert(new Set(app.rides.map(r=>r.trip_date)).size>1);
  assert(app.rides.every(r=>!r.identity_revealed&&r.owner_name.startsWith('Loop Member ')),'A fresh student sees only aliases');
  let html=select('#app').innerHTML;assert(html.includes('Ask CampusLoop.'));assert(html.includes('Recurring rides'));assert(html.includes('One-time & round trips'));assert(!/[\uac00-\ud7a3]/.test(html));assert(!/sample pin|latitude|longitude/i.test(html));
  const blank=run('locationFields')('origin',null,true,false);assert(blank.includes('value=""'));assert(!blank.includes('Wilshire'));assert(!blank.includes('disabled'));assert(!/name="origin_(lat|lon)"/.test(blank));
