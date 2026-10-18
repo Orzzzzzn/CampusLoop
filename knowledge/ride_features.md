@@ -6,7 +6,9 @@ An owner can change departure, arrival deadline and notes for one unrequested re
 
 # Cost shares and recommendations
 
-Posted prices are per passenger per booked date, including both legs of a round trip. Suggested price is $1 plus $0.35 per route mile, rounded to $0.25 with a $2–$30 one-way range. Round trips double that amount. Without road routing, distance is labelled an approximation of straight-line distance times 1.25. The poster may set a manual cost share or rider budget. The price when requesting is stored and remains the agreed price after acceptance or waitlist promotion. Requests and My rides show per-person and party totals. CampusLoop does not process payments.
+Automatic base price is Google Maps driving miles × $0.60 plus traffic-aware minutes × $0.30. Driver earnings are base × [1 + 0.65 × (n − 1)]; each rider pays earnings / n. Count confirmed passengers, including party members, but exclude the driver and pending/waitlisted requests. Posting shows Estimated Earnings from one rider to full seats; requesting shows Estimated Price from full seats to one rider. Acceptance and manual waitlist claims display current projected prices again. Confirmed prices update with passenger joins, cancellations and promotions. Round trips add Google distance and duration for each direction at its scheduled departure. Amounts are rounded to cents at the end, with no service fee or automatic-price cap. Per-person and earnings rounding can differ by a few cents when multiplied. CampusLoop does not process payments.
+
+The Google traffic estimate is saved when posting; recurring rides use the first scheduled date's estimate. Later schedule edits do not refresh this estimate. Missing keys or unavailable/invalid Google route data block automatic quotes, without mock or straight-line pricing. Manual price/budget remains available. Existing fixed-price rides retain their request-time agreement. Requests and My rides show per-person and party totals; drivers also see current estimated earnings.
 
 Recommended sorting weights route proximity 40, time proximity 25, price 15, role rating 10, available seats 10. Unselected locations/time and unrated members receive neutral scores. Driver posts favor lower cost share, rider posts favor higher budgets. Required filters are applied first. The score explains relevance, not acceptance probability or safety. Nearest, earliest and price sorts are available.
 
@@ -14,7 +16,7 @@ Recommended sorting weights route proximity 40, time proximity 25, price 15, rol
 
 Only actual drivers and their confirmed passengers can rate each other after arrival (round trips after return departure plus one hour). Drivers rate riders, passengers rate the driver. A rating is 1–5 stars, one per partner per ride date. Editing updates the existing vote. Average and count are public below the avatar; identities stay private until confirmation. Past or All dates in My rides exposes rating actions for completed bookings.
 
-Route thumbnails use road geometry between posted area centers when OSRM is available. Estimated duration excludes live traffic. When routing fails, a dashed approximate connection is labelled as such. Online tiles and routing require internet. Exact agreed meeting points can differ from the posted centers.
+Route thumbnails use OSRM road geometry between posted area centers, labelled OSRM map preview. Their duration excludes live traffic and is not used for pricing; Google pricing distance and traffic-aware time appear separately. When map routing fails, a dashed approximate connection is labelled as such. Online tiles and routing require internet. Exact agreed meeting points can differ from the posted centers.
 
 # Repeatable local examples
 

@@ -28,6 +28,7 @@ from .domain import (ROOT, PLACES, Problem, Store, application_views, boolean, c
     require, seed, text, trip_create, identity_name, private_text, integer)
 from .rag import RAG
 from .places import Places
+from .pricing import occurrence_pricing
 from .routes import Routes
 from .features import my_rides, edit_date, skip_week, rate_person, create_demo, demo_views, release_demo
 
@@ -184,7 +185,8 @@ class App:
             return {'rides':rides},200,{}
         if path=='/api/pricing/quote' and method=='POST':
             self.rate(('quote',user['id']),40,300)
-            return self.routes.quote(data.get('origin'),data.get('destination'),data.get('kind','one')),200,{}
+            return self.routes.quote(data.get('origin'),data.get('destination'),data.get('kind','one'),
+                **{k:data.get(k) for k in ('seats','start_date','departure_hour','return_hour','weekdays')}),200,{}
         if path=='/api/routes/preview' and method=='POST':
             self.rate(('routes',user['id']),120,300)
             with self.store.read() as db:
@@ -196,7 +198,8 @@ class App:
             require(mode in ('automatic','manual'),'Choose automatic or manual pricing.')
             data=dict(data)
             if mode=='automatic':
-                quote=self.routes.quote(data.get('origin'),data.get('destination'),data.get('kind'))
+                quote=self.routes.quote(data.get('origin'),data.get('destination'),data.get('kind'),
+                    **{k:data.get(k) for k in ('seats','start_date','departure_hour','return_hour','weekdays')})
                 data.update(price_cents=quote['price_cents'],_price_meta=quote)
             else:
                 data['_price_meta']={'mode':'manual'}
@@ -274,16 +277,27 @@ class App:
                         message['name'],message['identity_revealed']=identity_name(db,user['id'],message.pop('subject_id'),oid)
                         message['body']=private_text(db,message['body'],user['id'],oid)
                 return {'messages':messages},200,{}
-        match=re.fullmatch(r'/api/applications/(\d+)/(accept|decline|cancel|claim)',path)
+        match=re.fullmatch(r'/api/applications/(\d+)/(accept|decline|cancel|claim|price)',path)
         if match and method=='POST':
             aid,action=int(match[1]),match[2]
             with self.store.tx() as db:
+                application=db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone()
+                require(application is not None,'Request not found.',404)
+                occurrence=joined_occurrence(db,application['occurrence_id'])
+                require(user['id'] in (application['requester_id'],occurrence['owner_id']),'This request belongs to another member.',403)
+                projected=occurrence_pricing(db,occurrence,application['party_size'] if application['status'] in ('pending','waitlisted') else 0)
+                if action=='price':
+                    return dict(pricing=projected,price_cents=application['agreed_price_cents'],party_size=application['party_size']),200,{}
+                if action in ('accept','claim') and projected:
+                    require(data.get('expected_rider_count')==projected['rider_count'],
+                            'Rider count changed. Review the current price and confirm again.',409)
                 if action in ('accept','decline'):
                     result={'status':decide(db,user,aid,action=='accept')}
                 elif action=='cancel':
                     result={'canceled':True,'promoted_application_ids':cancel_application(db,user,aid)}
                 else:
                     claim(db,user,aid);result={'status':'confirmed'}
+                result['pricing']=occurrence_pricing(db,joined_occurrence(db,application['occurrence_id']))
             return result,200,{}
         if path=='/api/rag/ask' and method=='POST':
             self.rate(('rag',user['id']),12,300)

@@ -95,6 +95,8 @@ def my_rides(db,user,criteria=None):
         own=r['application']
         agreed=own['agreed_price_cents'] if own else (confirmed[0]['agreed_price_cents'] if r['role']=='rider' and confirmed else r['price_cents'])
         r['agreed_price_cents']=agreed if agreed is not None else r['price_cents']
+        if r.get('pricing'):
+            r['agreed_price_cents']=r['pricing']['rider_price_cents']
         booking=next((a for a in confirmed if a['requester_id']==user['id']),None)
         if booking is None and r['role']=='rider' and confirmed: booking=confirmed[0]
         r['meeting_origin']=json.loads(booking['meeting_origin']) if booking else None

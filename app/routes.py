@@ -1,4 +1,4 @@
-"""OSRM road geometry with a clearly labelled offline approximation and cached quotes."""
+"""Google traffic-aware pricing and independent OSRM map previews."""
 from __future__ import annotations
 import hashlib
 import json
@@ -6,8 +6,12 @@ import math
 import os
 import threading
 import time
+import datetime as dt
+from decimal import Decimal
+import re
 from urllib.request import Request, urlopen
-from .domain import location, distance_miles, require
+from .domain import location, distance_miles, require, Problem, ZONE, date_value, integer, now
+from .pricing import MODEL, cents, summary
 
 
 class Routes:
@@ -15,6 +19,10 @@ class Routes:
         self.store=store
         self.url=(os.getenv('ROUTER_URL','https://router.project-osrm.org/route/v1/driving') if url is None else url).rstrip('/')
         self.lock=threading.Lock();self.last_request=0
+        self.google_key=os.getenv('GOOGLE_MAPS_API_KEY','').strip()
+        self.google_url='https://routes.googleapis.com/directions/v2:computeRoutes'
+        self.google_cache={}
+        self.google_lock=threading.Lock()
 
     def route(self,origin,destination):
         origin,destination=location(origin),location(destination)
@@ -50,10 +58,60 @@ class Routes:
                 db.execute('INSERT OR REPLACE INTO route_cache(cache_key,result,expires) VALUES(?,?,?)',(key,json.dumps(result),time.time()+(86400 if result['is_road_route'] else 60)))
         return result
 
-    def quote(self,origin,destination,kind):
+    def google_metrics(self, origin, destination, departure):
+        require(bool(self.google_key),'Automatic pricing is unavailable. Configure GOOGLE_MAPS_API_KEY on the server or choose a manual price.',503)
+        origin,destination=location(origin),location(destination)
+        def waypoint(point):
+            return {'location':{'latLng':{'latitude':point['lat'],'longitude':point['lon']}}}
+        payload=dict(origin=waypoint(origin),destination=waypoint(destination),travelMode='DRIVE',
+                     routingPreference='TRAFFIC_AWARE',departureTime=departure,
+                     computeAlternativeRoutes=False)
+        key=json.dumps(payload,sort_keys=True)
+        # Brief memory-only reuse for form edits; do not reuse the 24h map cache for traffic.
+        with self.google_lock:
+            cached=self.google_cache.get(key)
+            if cached and cached[0]>time.time(): return cached[1]
+            try:
+                request=Request(self.google_url,data=json.dumps(payload).encode(),method='POST',headers={
+                    'Content-Type':'application/json','X-Goog-Api-Key':self.google_key,
+                    'X-Goog-FieldMask':'routes.distanceMeters,routes.duration'})
+                with urlopen(request,timeout=8) as response:
+                    route=json.loads(response.read(1_000_000))['routes'][0]
+                distance=route['distanceMeters'];duration=route['duration']
+                require(type(distance) in (int,float) and math.isfinite(distance) and distance>=0,'Invalid Google distance.')
+                require(isinstance(duration,str) and re.fullmatch(r'\d+(?:\.\d{1,9})?s',duration) is not None,'Invalid Google duration.')
+                result=dict(distance_meters=str(distance),duration_seconds=duration[:-1])
+            except Exception:
+                # Never return provider bodies or credentials to the browser.
+                raise Problem(503,'Google Maps route data is unavailable. Retry or choose a manual price.') from None
+            self.google_cache={k:v for k,v in self.google_cache.items() if v[0]>time.time()}
+            self.google_cache[key]=(time.time()+60,result)
+            return result
+
+    def quote(self,origin,destination,kind,*,seats=1,start_date=None,departure_hour=None,return_hour=None,weekdays=None):
         require(kind in ('regular','one','round'),'Invalid trip type.')
-        route=self.route(origin,destination)
-        base=100; mileage=round(route['distance_miles']*35)
-        one_way=min(3000,max(200,int(math.floor((base+mileage+12.5)/25)*25)))
-        multiplier=2 if kind=='round' else 1
-        return dict(price_cents=one_way*multiplier,mode='automatic',currency='USD',per='passenger per booked date; both legs included for round trips',distance_miles=route['distance_miles'],is_road_route=route['is_road_route'],base_cents=base,cents_per_mile=35,minimum_cents=200,maximum_one_way_cents=3000,rounding_cents=25,legs=multiplier,formula='$1 + $0.35 per route mile; nearest $0.25; $2–$30 per leg. Round trips double the one-way amount.',notice=route['notice'])
+        integer({'seats':seats},'seats',1,4)
+        day=date_value(start_date)
+        hour=integer({'hour':departure_hour},'hour',0,22)
+        if kind=='regular':
+            require(isinstance(weekdays,list) and weekdays and all(type(d) is int and 0<=d<=6 for d in weekdays),'Choose recurring weekdays.')
+            day+=dt.timedelta(days=next(i for i in range(7) if (day+dt.timedelta(days=i)).weekday() in weekdays))
+        departure=dt.datetime.combine(day,dt.time(hour),ZONE)
+        require(departure>now(),'Departure must be in the future.')
+        def stamp(value): return value.astimezone(dt.timezone.utc).isoformat().replace('+00:00','Z')
+        legs=[self.google_metrics(origin,destination,stamp(departure))]
+        if kind=='round':
+            back=integer({'hour':return_hour},'hour',hour+1,23)
+            legs.append(self.google_metrics(destination,origin,stamp(dt.datetime.combine(day,dt.time(back),ZONE))))
+        miles=sum(Decimal(r['distance_meters']) for r in legs)/Decimal('1609.344')
+        minutes=sum(Decimal(r['duration_seconds']) for r in legs)/60
+        base=miles*60+minutes*30
+        result=dict(model=MODEL,mode='automatic',currency='USD',price_cents=cents(base),
+                    base_amount_cents=str(base),distance_miles=round(float(miles),2),duration_minutes=round(float(minutes),2),
+                    source='Google Maps',traffic_aware=True,is_road_route=True,legs=len(legs),route_legs=legs,
+                    quoted_at=now().isoformat(),departure_time=stamp(departure),cents_per_mile=60,cents_per_minute=30,
+                    rider_multiplier=0.65,service_fee_cents=0,
+                    formula='$0.60 × miles + $0.30 × minutes; earnings = base × [1 + 0.65 × (riders − 1)]; price = earnings ÷ riders.',
+                    notice='Google Maps traffic-aware estimate at posting time. Current prices change with confirmed rider count. No service fee or payment collection.')
+        result['pricing']=summary(result,seats)
+        return result

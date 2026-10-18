@@ -1,5 +1,20 @@
 # CampusLoop 2.2.0 verification record
 
+## Pricing update verified on 2026-10-17
+
+**55 tests passed** with Python 3.12.4 and Node.js 24.16.0 using `python -m unittest discover -s tests -v`. SQLite and HTTP fixtures use temporary local data; no user database or paid Google request was used. JavaScript syntax and `git diff --check` also passed.
+
+- Google `computeRoutes` HTTP fixtures verify POST method, server-only API-key header, field mask, `DRIVE`, `TRAFFIC_AWARE`, scheduled departure converted from America/Los_Angeles to UTC, distance/duration units, short cache reuse and higher traffic duration increasing the base price.
+- Automatic prices use the new $0.60/mile + $0.30/minute formula and 0.65 rider multiplier. Fractional units are preserved until final cent rounding. New automatic prices have no legacy minimum/maximum or service fee.
+- Shared prices update across requests and confirmed rides for parties, acceptance, cancellation, waitlist promotion and manual claims. Pending/waitlisted parties do not occupy seats. Another member cannot inspect a private application quote; stale rider-count confirmation is rejected.
+- Round trips request both directions at their own scheduled departure. Recurring estimates use the first selected weekday. Missing keys, provider errors and malformed durations return no automatic price; no OSRM/mock fallback is used for pricing.
+- Production JavaScript contract checks cover driver posting earnings ranges, rider price ranges, Google metrics and acceptance price confirmation. The existing full frontend handler contract against the local Python API also passed. These checks inspect HTML/handlers, not browser layout.
+- Existing fixed-price snapshots, booking/capacity, authentication/privacy, ratings, RAG, map previews and updater tests remain passing.
+
+Real Google API access was not tested because `GOOGLE_MAPS_API_KEY` is not set in this environment. Docker deployment and full browser rendering were not performed for this change. API setup and estimate lifetime are documented in README.md.
+
+## Repository baseline record retained below
+
 Verification date: 2026-10-18. Runtime: Python 3.12 and Node.js 24.
 
 ## Executed successfully

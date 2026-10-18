@@ -33,7 +33,19 @@ In My rides, use **Change this date only** to change departure, arrival deadline
 
 ### Prices, recommendations and ratings
 
-Suggested one-way cost share per passenger is **$1 + $0.35 × route miles**, rounded to the nearest **$0.25**, with a **$2 minimum** and **$30 maximum per leg**. A round trip doubles the amount and includes both legs; regular rides charge the listed amount per booked date. When OSRM is unavailable, distance is explicitly estimated as straight-line distance × 1.25. Choose **Set my own price / budget** to override. Server calculation is authoritative; this is a demo cost-sharing formula, not a fare-market estimate. CampusLoop does not collect payments.
+Automatic pricing uses **Google Maps Routes API** driving distance and traffic-aware duration for the scheduled departure (America/Los_Angeles):
+
+```text
+Base = miles × $0.60 + minutes × $0.30
+Driver earnings = Base × [1 + 0.65 × (n − 1)]
+Price per rider = Driver earnings / n
+```
+
+`n` is confirmed passenger count, including everyone in a party and excluding the driver, pending requests and waitlisted parties. Posting shows **Estimated Earnings** from one passenger to full capacity. Riders see **Estimated Price** from full capacity to one passenger. Requests show the projected price if the whole party fits; confirming acceptance or a manual waitlist claim shows the price again, and the server rejects a stale rider count. Confirmed prices update when riders join, cancel or are promoted. Money is rounded only at the end to the nearest cent; there is no service fee or legacy minimum/maximum for automatic prices. Independently rounded per-person and earnings displays can differ by a few cents when multiplied; no payments are collected.
+
+Round trips query both directions at their own departure hours and sum the returned distances and durations. The traffic estimate is saved at posting, with at most 60 seconds of in-memory reuse while editing the form. Recurring rides use the first scheduled date's traffic estimate for subsequent dates; changing an occurrence's schedule does not refresh that saved estimate. Prices then vary with confirmed rider count, not continuous traffic polling. Manual prices and previously saved rides retain their original fixed-price behavior.
+
+Set **`GOOGLE_MAPS_API_KEY`** on the backend. With Compose, copy `.env.example` to `.env`, fill in the key and run `docker compose up --build -d`. Enable Routes API and billing for that key's Google Cloud project. The key is sent only by the backend in the `X-Goog-Api-Key` header. Native Python does not load `.env`; in PowerShell set `$env:GOOGLE_MAPS_API_KEY='your-key'` before starting the server. Missing keys, provider errors and invalid route data make automatic pricing unavailable; no OSRM, straight-line or mock distance/time is used for prices. **Set my own price / budget** remains available. See the [Google Routes API request documentation](https://developers.google.com/maps/documentation/routes/compute_route_directions).
 
 **Recommended** sorts by an explainable relevance score: route proximity 40, departure-time proximity 25, listed price 15, role-specific average rating 10, and seat availability 10. Unselected route/time and unrated members receive neutral scores. Driver posts favor lower cost shares; rider posts favor higher offered budgets. Required location, date, time and role filters are applied before scoring. **Why this ride?** shows the factors. Nearest places, earliest departure and lowest price are alternative sorts. The score does not predict acceptance or safety.
 
@@ -41,7 +53,7 @@ Only the actual driver and confirmed passengers can rate each other, after the a
 
 ### Route pictures and online services
 
-Visible cards lazily request [OSRM](https://project-osrm.org/docs/v5.24.0/api/) road geometry between posted pickup and drop-off centers, drawn over OpenStreetMap tiles. Route requests send the two center coordinates, not names or account details. Geometry is cached for 24 hours, failed routes for one minute, with at most one new upstream request per second. Travel time is an estimate without live traffic. An offline or unavailable route shows a dashed **approximate connection**, rather than presenting a straight line as a road path.
+Visible cards lazily request [OSRM](https://project-osrm.org/docs/v5.24.0/api/) road geometry between posted pickup and drop-off centers, drawn over OpenStreetMap tiles. This is explicitly labelled **OSRM map preview** and is separate from Google pricing metrics. Route requests send the two center coordinates, not names or account details. Geometry is cached for 24 hours, failed routes for one minute, with at most one new upstream request per second. Map-preview time excludes live traffic; pricing uses Google's traffic-aware duration instead. An offline or unavailable map route shows a dashed **approximate connection**.
 
 Map tiles are loaded only for visible thumbnails, with browser HTTP caching and visible attribution, following the [OpenStreetMap tile policy](https://operations.osmfoundation.org/policies/tiles/). No offline or bulk tile download is implemented. Road previews use `ROUTER_URL` (an OSRM-compatible driving endpoint); the default public service is intended for light demo use. Set a self-hosted endpoint for a larger installation. When upgrading an older Compose installation, its Compose file is retained; the default URL still works, but a custom router setting must also be added to that file's app environment.
 

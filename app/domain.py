@@ -303,7 +303,9 @@ def trip_create(db, user, data):
     departure = integer(data, 'departure_hour', 0, 22)
     deadline = integer(data, 'arrive_by', departure+1, 23)
     seats = integer(data, 'seats', 1, 4)
-    price = integer(data, 'price_cents', 0, 10000)
+    from .pricing import MODEL
+    automatic=data.get('_price_meta',{}).get('model')==MODEL
+    price = integer(data, 'price_cents', 0, 2**53 if automatic else 10000)
     detour = integer(data, 'detour_minutes', 0, 60)
     start = date_value(data.get('start_date'))
     end = date_value(data.get('end_date', data.get('start_date'))) if kind == 'regular' else start
@@ -429,6 +431,8 @@ def list_trips(db, actor_id, criteria=None):
         if not criteria.get('date') and not criteria.get('_include_past') and r['departed']:
             continue
         r['confirmed_seats']=occupied(db,r['id'])
+        from .pricing import occurrence_pricing
+        r['pricing']=occurrence_pricing(db,r)
         r['available_seats']=max(0,r['capacity']-r['confirmed_seats']) if r['role']=='driver' else (0 if r['driver_id'] else r['capacity'])
         own=db.execute('SELECT id,status,party_size,agreed_price_cents FROM applications WHERE occurrence_id=? AND requester_id=?',(r['id'],actor_id)).fetchone()
         r['application']=dict(own) if own else None
@@ -473,11 +477,14 @@ def request_ride(db, user, oid, data):
     existing = db.execute('SELECT id,status FROM applications WHERE occurrence_id=? AND requester_id=?',(oid,user['id'])).fetchone()
     require(not existing or existing['status'] in ('canceled','declined'), 'You already have an active request for this date.',409)
     values = (party,int(auto),json.dumps(pickup),json.dumps(dropoff),now().timestamp())
+    from .pricing import occurrence_pricing
+    pricing=occurrence_pricing(db,o,party)
+    request_price=pricing['rider_price_cents'] if pricing else o['price_cents']
     if existing:
         aid = existing['id']
-        db.execute("UPDATE applications SET status='pending',party_size=?,auto_confirm=?,meeting_origin=?,meeting_destination=?,created_at=?,agreed_price_cents=? WHERE id=?",(*values,o['price_cents'],aid))
+        db.execute("UPDATE applications SET status='pending',party_size=?,auto_confirm=?,meeting_origin=?,meeting_destination=?,created_at=?,agreed_price_cents=? WHERE id=?",(*values,request_price,aid))
     else:
-        aid = db.execute("INSERT INTO applications(occurrence_id,requester_id,status,party_size,auto_confirm,meeting_origin,meeting_destination,created_at,agreed_price_cents) VALUES(?,?,'pending',?,?,?,?,?,?)",(oid,user['id'],*values,o['price_cents'])).lastrowid
+        aid = db.execute("INSERT INTO applications(occurrence_id,requester_id,status,party_size,auto_confirm,meeting_origin,meeting_destination,created_at,agreed_price_cents) VALUES(?,?,'pending',?,?,?,?,?,?)",(oid,user['id'],*values,request_price)).lastrowid
     event(db,oid,user['id'],user['name']+' sent '+('a ride offer.' if o['role']=='rider' else 'a seat request.'))
     return aid
 
@@ -554,6 +561,10 @@ def application_views(db,user):
             r[key]=effective[key]
         if r['agreed_price_cents'] is None:
             r['agreed_price_cents']=r['price_cents']
+        from .pricing import occurrence_pricing
+        r['pricing']=occurrence_pricing(db,effective,r['party_size'] if r['status'] in ('pending','waitlisted') else 0)
+        if r['pricing'] and r['status'] in ('pending','waitlisted','confirmed'):
+            r['agreed_price_cents']=r['pricing']['rider_price_cents']
         r['total_price_cents']=r['agreed_price_cents']*r['party_size']
         from .features import rating_summary
         r['counterparty_rating']=rating_summary(db,r['requester_id'] if r['owner_id']==user['id'] else r['owner_id'],('rider' if r['role']=='driver' else 'driver') if r['owner_id']==user['id'] else r['role'])
