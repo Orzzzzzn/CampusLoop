@@ -158,6 +158,10 @@ class RouteTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.store=Store(Path(self.temp.name)/'db.sqlite3');self.calls=[]
         calls=self.calls
         class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                payload=json.dumps(dict(routes=[dict(distanceMeters=16093.44,duration='1200s')])).encode()
+                self.rfile.read(int(self.headers['Content-Length']))
+                self.send_response(200);self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
             def do_GET(self):
                 calls.append((self.path,self.headers.get('User-Agent')))
                 payload=json.dumps(dict(code='Ok',routes=[dict(distance=16093.44,duration=1200,geometry=dict(coordinates=[[-118.2904,34.0621],[-118.30,34.04],[-118.2915,34.0203]]))])).encode()
@@ -165,11 +169,13 @@ class RouteTests(unittest.TestCase):
             def log_message(self,*args):pass
         self.http=ThreadingHTTPServer(('127.0.0.1',0),Handler);self.thread=threading.Thread(target=self.http.serve_forever,kwargs=dict(poll_interval=.01),daemon=True);self.thread.start()
         self.router=Routes(self.store,'http://127.0.0.1:'+str(self.http.server_port)+'/route/v1/driving')
+        self.router.google_key='test-only';self.router.google_url='http://127.0.0.1:'+str(self.http.server_port)+'/google'
         self.a={**PLACES[0], 'mode':'exact','radius_miles':0};self.b={**PLACES[4], 'mode':'exact','radius_miles':0}
     def tearDown(self):self.http.shutdown();self.http.server_close();self.thread.join(2);self.temp.cleanup()
     def test_road_geometry_http_cache_and_round_trip_price(self):
-        q=self.router.quote(self.a,self.b,'one');self.assertEqual(q['price_cents'],450);self.assertTrue(q['is_road_route'])
-        self.assertEqual(self.router.quote(self.a,self.b,'round')['price_cents'],900)
+        options=dict(seats=2,start_date=str(today()+dt.timedelta(days=2)),departure_hour=8,return_hour=17)
+        q=self.router.quote(self.a,self.b,'one',**options);self.assertEqual(q['price_cents'],1200);self.assertTrue(q['is_road_route'])
+        self.assertEqual(self.router.quote(self.a,self.b,'round',**options)['price_cents'],2400)
         result=self.router.route(self.a,self.b);self.assertEqual(len(result['coordinates']),3)
         self.assertEqual(result['distance_miles'],10);self.assertEqual(result['duration_minutes'],20)
         self.assertEqual(len(self.calls),1);self.assertIn('geometries=geojson',self.calls[0][0]);self.assertIn('CampusLoop',self.calls[0][1])
@@ -178,18 +184,21 @@ class RouteTests(unittest.TestCase):
         other={**self.a,'lon':self.a['lon']+.01}
         self.assertTrue(self.router.route(other,self.b)['is_road_route'])
         self.assertEqual(len(self.calls),2)
-    def test_offline_fallback_and_price_limits(self):
-        router=Routes(self.store,'');q=router.quote(self.a,self.b,'one')
-        self.assertFalse(q['is_road_route']);self.assertIsNone(router.route(self.a,self.b)['duration_minutes'])
-        self.assertIn('straight-line',q['notice']);self.assertEqual(q['price_cents']%25,0)
-        self.assertEqual(router.quote(self.a,self.a,'one')['price_cents'],200)
-        far={**self.b,'lat':40,'lon':-73};self.assertEqual(router.quote(self.a,far,'round')['price_cents'],6000)
+    def test_offline_map_fallback_does_not_generate_a_price(self):
+        router=Routes(self.store,'');router.google_key=''
+        result=router.route(self.a,self.b)
+        self.assertFalse(result['is_road_route']);self.assertIsNone(result['duration_minutes'])
+        self.assertIn('straight-line',result['notice'])
+        with self.assertRaisesRegex(Exception,'GOOGLE_MAPS_API_KEY'):
+            router.quote(self.a,self.b,'one',seats=1,start_date=str(today()+dt.timedelta(days=2)),departure_hour=8)
     def test_automatic_pricing_is_computed_by_server(self):
-        app=base.App(self.store,demo_mode=True);app.routes=self.router
+        from app.domain import seed
+        seed(self.store)  # Explicit legacy regression fixtures; not production startup data.
+        app=base.App(self.store,demo_mode=True,seed_data=False);app.routes=self.router
         with self.store.read() as db:user=dict(db.execute("SELECT * FROM users WHERE email='mina@usc.edu'").fetchone())
         body,headers=app.new_session(user);auth={'Cookie':headers['Set-Cookie'].split(';')[0],'X-CSRF-Token':body['csrf']}
         data=dict(role='driver',kind='one',origin=self.a,destination=self.b,departure_hour=8,arrive_by=9,start_date=str(today()+dt.timedelta(days=2)),seats=2,price_cents=1,price_mode='automatic',detour_minutes=10,note='Computed by server')
         result,status,_=app.dispatch('POST','/api/trips',data,auth);self.assertEqual(status,201)
         with self.store.read() as db:
             trip=db.execute('SELECT * FROM trips WHERE id=?',(result['trip_id'],)).fetchone()
-            self.assertEqual(trip['price_cents'],450);self.assertEqual(json.loads(trip['price_meta'])['mode'],'automatic')
+            self.assertEqual(trip['price_cents'],1200);self.assertEqual(json.loads(trip['price_meta'])['mode'],'automatic')

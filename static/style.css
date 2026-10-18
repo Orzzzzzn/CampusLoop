@@ -1207,7 +1207,7 @@ dialog::backdrop {
   .hero h1 {
     font-size:46px
   }
-  
+
 }
 
 @media(max-width:1000px) {
@@ -1244,7 +1244,7 @@ dialog::backdrop {
   .my-grid {
     grid-template-columns:1.2fr 1fr
   }
-  
+
 }
 
 @media(max-width:760px) {
@@ -1359,7 +1359,7 @@ dialog::backdrop {
   .card-bottom {
     flex-wrap:wrap
   }
-  
+
 }
 
 @media(max-width:430px) {
@@ -1382,7 +1382,7 @@ dialog::backdrop {
   .page-top h1 {
     font-size:27px
   }
-  
+
 }
 
 @media(prefers-reduced-motion:reduce) {
@@ -1390,7 +1390,7 @@ dialog::backdrop {
     transition:none!important;
     scroll-behavior:auto!important
   }
-  
+
 }
 
 /* Independent point-or-area selectors for each endpoint. */.route-point {
@@ -1639,7 +1639,7 @@ dialog::backdrop {
   .location-settings-note {
     margin-bottom:18px
   }
-  
+
 }
 
 /* Server-backed app */.auth-layout {
@@ -2037,7 +2037,7 @@ input[type=checkbox] {
   .layout {
     grid-template-columns:1.4fr 1fr
   }
-  
+
 }
 
 @media(max-width:760px) {
@@ -2102,7 +2102,7 @@ input[type=checkbox] {
   nav button {
     font-size:11px
   }
-  
+
 }
 
 /* CampusLoop place-and-range controls */.brand {
@@ -2288,7 +2288,7 @@ header {
   .app-search .location-grid {
     grid-template-columns:1fr
   }
-  
+
 }
 
 .build-version {
@@ -2303,7 +2303,7 @@ header {
   .build-version {
     margin-left:-5px
   }
-  
+
 }
 
 .place-search-row {
@@ -2546,7 +2546,7 @@ nav {
   .layout {
     grid-template-columns:minmax(0,1fr) 280px
   }
-  
+
 }
 
 @media(max-width:760px) {
@@ -2590,7 +2590,7 @@ nav {
     flex-wrap:wrap;
     gap:8px
   }
-  
+
 }
 
 .board-group>h2 {
@@ -2754,3 +2754,35 @@ nav {
   font-size: 11px;
   margin: 10px 0
 }
+
+.pricing-explanation {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.6
+}
+
+.pricing-explanation summary {
+  cursor: pointer;
+  font-weight: 650
+}
+
+.pricing-explanation p {
+  margin-top: 8px
+}
+
+.pricing-route-info {
+  grid-column: 1/-1;
+  margin-top: 8px
+}
+
+.price .pricing-caption {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.5
+}
+
+#ride-results {
+  scroll-margin-top: 24px
+}
+
+.recurring-period{display:flex;flex-direction:column;gap:5px;margin:12px 0;padding:12px 14px;border-left:3px solid #588268;background:#edf3eb;color:#234132;font-size:13px}.recurring-period span{font-size:12px;line-height:1.5}.series-dates{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px;text-align:left}.series-dates th,.series-dates td{padding:9px 7px;border-bottom:1px solid #d5dfd2;vertical-align:top}.series-dates th{background:#edf3eb;color:#234132}.series-dates td{line-height:1.5}

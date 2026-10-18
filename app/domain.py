@@ -165,6 +165,13 @@ CREATE TABLE IF NOT EXISTS embeddings (
  PRIMARY KEY(content_hash,model)
 );
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS recurring_requests (
+ id INTEGER PRIMARY KEY, trip_id INTEGER NOT NULL REFERENCES trips(id),
+ requester_id INTEGER NOT NULL REFERENCES users(id), status TEXT NOT NULL,
+ party_size INTEGER NOT NULL, auto_confirm INTEGER NOT NULL,
+ meeting_origin TEXT NOT NULL, meeting_destination TEXT NOT NULL, created_at REAL NOT NULL,
+ UNIQUE(trip_id,requester_id)
+);
 CREATE TABLE IF NOT EXISTS place_cache (cache_key TEXT PRIMARY KEY, results TEXT NOT NULL, expires REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS ratings (
  id INTEGER PRIMARY KEY, occurrence_id INTEGER NOT NULL REFERENCES occurrences(id),
@@ -201,7 +208,7 @@ class Store:
                 'users': [('is_demo_fixture','INTEGER NOT NULL DEFAULT 0')],
                 'trips': [('price_meta',"TEXT NOT NULL DEFAULT '{}'")],
                 'occurrences': [('overrides',"TEXT NOT NULL DEFAULT '{}'")],
-                'applications': [('agreed_price_cents','INTEGER'), ('cancel_reason','TEXT'), ('matched','INTEGER NOT NULL DEFAULT 0')],
+                'applications': [('agreed_price_cents','INTEGER'), ('cancel_reason','TEXT'), ('matched','INTEGER NOT NULL DEFAULT 0'), ('recurring_id','INTEGER REFERENCES recurring_requests(id)')],
             }.items():
                 columns={r['name'] for r in db.execute('PRAGMA table_info('+table+')')}
                 for name, declaration in additions:
@@ -288,7 +295,7 @@ def list_notifications(db, user, limit=40):
            FROM notifications WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT ?''',
         (user['id'], limit),
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [dict(r) for r in rows if not r['occurrence_id'] or not json.loads(joined_occurrence(db,r['occurrence_id'])['price_meta']).get('retired_setup')]
 
 
 def mark_notifications_read(db, user, ids=None):
@@ -309,15 +316,21 @@ def joined_occurrence(db, oid):
 
 
 def effective_occurrence(row):
+    retired=json.loads(row.get('price_meta') or '{}').get('retired_setup')
     override=json.loads(row.get('overrides') or '{}')
-    for key in ('departure_hour','arrive_by','origin','destination','note','price_cents'):
+    for key in ('departure_hour','arrive_by','origin','destination','note','price_cents','price_meta'):
         if key in override:
-            row[key]=json.dumps(override[key]) if key in ('origin','destination') else override[key]
-    row['has_exception']=bool(override)
+            row[key]=json.dumps(override[key]) if key in ('origin','destination','price_meta') else override[key]
+    row['has_exception']=any(k not in ('price_meta','price_cents') for k in override)
+    if retired:
+        meta=json.loads(row['price_meta']);meta['retired_setup']=True;row['price_meta']=json.dumps(meta)
     return row
 
 
 def ensure_open(o):
+    meta=o.get('price_meta') or {}
+    if isinstance(meta,str):meta=json.loads(meta)
+    require(not meta.get('retired_setup'),'This earlier setup offer is archived and read-only.',409)
     departure = dt.datetime.combine(date_value(o['trip_date']), dt.time(o['departure_hour']), ZONE)
     require(o['status'] == 'active' and departure > now(), 'This ride has departed or was canceled.', 409)
 
@@ -331,6 +344,8 @@ def promote(db, o):
         return []
     try:
         ensure_open(o)
+        from .pricing import require_price
+        require_price(o)
     except Problem:
         return []
     free = o['capacity'] - occupied(db, o['id'])
@@ -355,7 +370,9 @@ def trip_create(db, user, data):
     departure = integer(data, 'departure_hour', 0, 22)
     deadline = integer(data, 'arrive_by', departure+1, 23)
     seats = integer(data, 'seats', 1, 4)
-    price = integer(data, 'price_cents', 0, 10000)
+    from .pricing import MODEL
+    automatic=data.get('_price_meta',{}).get('model')==MODEL
+    price = integer(data, 'price_cents', 0, 2**53 if automatic else 10000)
     detour = integer(data, 'detour_minutes', 0, 60)
     start = date_value(data.get('start_date'))
     end = date_value(data.get('end_date', data.get('start_date'))) if kind == 'regular' else start
@@ -442,6 +459,8 @@ def list_trips(db, actor_id, criteria=None):
     required_days=criteria.get('weekdays',[])
     require(isinstance(required_days,list) and all(type(d) is int and 0<=d<=6 for d in required_days),'Invalid weekdays.')
     clauses=['o.status=?'];args=['active']
+    if criteria.get('trip_id') not in (None,''):
+        clauses.append('o.trip_id=?');args.append(integer(criteria,'trip_id',1,2147483647))
     if criteria.get('date'):
         clauses.append('o.trip_date=?');args.append(str(date_value(criteria['date'])))
     else:
@@ -452,13 +471,20 @@ def list_trips(db, actor_id, criteria=None):
     query='''SELECT o.*,t.owner_id,t.role,t.origin,t.destination,t.departure_hour,t.arrive_by,t.kind,t.weekdays,t.start_date,t.end_date,t.price_cents,t.price_meta,t.detour_minutes,t.note,t.return_hour,u.name AS owner_name,u.vehicle
         FROM occurrences o JOIN trips t ON t.id=o.trip_id JOIN users u ON u.id=t.owner_id WHERE '''+ ' AND '.join(clauses)
     rows=db.execute(query,args).fetchall()
-    output=[]
+    output=[];schedules={}
     origin_filter=location(criteria['origin']) if criteria.get('origin') else None
     dest_filter=location(criteria['destination']) if criteria.get('destination') else None
     for raw in rows:
         r=effective_occurrence(dict(raw))
         r['price_meta']=json.loads(r['price_meta'])
+        if r['price_meta'].get('retired_setup'):continue
+        from .pricing import price_status
+        r['pricing_status']=price_status(r['price_meta'])
         r['origin'],r['destination'],r['weekdays']=json.loads(r['origin']),json.loads(r['destination']),json.loads(r['weekdays'])
+        if r['kind']=='regular':
+            from .recurring import schedule
+            if r['trip_id'] not in schedules:schedules[r['trip_id']]=schedule(db,r['trip_id'])
+            r['recurring_schedule']=schedules[r['trip_id']]
         if criteria.get('role') in ('driver','rider') and r['role']!=criteria['role']:
             continue
         if origin_filter and not overlaps(origin_filter,r['origin']):
@@ -481,8 +507,10 @@ def list_trips(db, actor_id, criteria=None):
         if not criteria.get('date') and not criteria.get('_include_past') and r['departed']:
             continue
         r['confirmed_seats']=occupied(db,r['id'])
+        from .pricing import occurrence_pricing
+        r['pricing']=occurrence_pricing(db,r)
         r['available_seats']=max(0,r['capacity']-r['confirmed_seats']) if r['role']=='driver' else (0 if r['driver_id'] else r['capacity'])
-        own=db.execute('SELECT id,status,party_size,agreed_price_cents FROM applications WHERE occurrence_id=? AND requester_id=?',(r['id'],actor_id)).fetchone()
+        own=db.execute('SELECT id,status,party_size,agreed_price_cents,recurring_id,(SELECT status FROM recurring_requests WHERE id=applications.recurring_id) AS recurring_status FROM applications WHERE occurrence_id=? AND requester_id=?',(r['id'],actor_id)).fetchone()
         r['application']=dict(own) if own else None
         r['is_owner']=r['owner_id']==actor_id
         r['owner_name'],r['identity_revealed']=identity_name(db,actor_id,r['owner_id'],r['id'])
@@ -506,7 +534,7 @@ def list_trips(db, actor_id, criteria=None):
     if sort=='soonest':
         return sorted(output,key=lambda r:(r['trip_date'],r['departure_hour'],r['id']))
     if sort=='price':
-        return sorted(output,key=lambda r:(r['price_cents'],r['trip_date'],r['departure_hour'],r['id']))
+        return sorted(output,key=lambda r:(not r['pricing_status']['ready'],r['price_cents'],r['trip_date'],r['departure_hour'],r['id']))
     return sorted(output,key=lambda r:((r['pickup_distance_miles'] or 0)+(r['dropoff_distance_miles'] or 0),r['trip_date'],r['departure_hour'],r['id']))
 
 
@@ -514,22 +542,33 @@ def request_ride(db, user, oid, data):
     require(user['verified'], 'Verify your student email first.',403)
     o = joined_occurrence(db,oid)
     ensure_open(o)
+    from .pricing import require_price
+    require_price(o)
+    require(not json.loads(o['price_meta']).get('retired_setup'),'This earlier setup offer is archived.',409)
     require(o['owner_id']!=user['id'], 'You cannot request your own post.',409)
     require(o['role']!='rider' or bool(user['vehicle'].strip()), 'Add your vehicle before offering to drive.')
-    require(o['role']!='rider' or o['driver_id'] is None, 'This rider already accepted a driver.',409)
     party = integer(data,'party_size',1,4,1) if o['role']=='driver' else o['seats']
     require(party<=o['capacity'],'Your party is larger than this ride’s passenger capacity.')
     pickup = fixed_point(data.get('meeting_origin'),json.loads(o['origin']))
     dropoff = fixed_point(data.get('meeting_destination'),json.loads(o['destination']))
     auto = boolean(data,'auto_confirm') if o['role']=='driver' else False
-    existing = db.execute('SELECT id,status FROM applications WHERE occurrence_id=? AND requester_id=?',(oid,user['id'])).fetchone()
-    require(not existing or existing['status'] in ('canceled','declined'), 'You already have an active request for this date.',409)
+    existing = db.execute('SELECT * FROM applications WHERE occurrence_id=? AND requester_id=?',(oid,user['id'])).fetchone()
+    if existing and existing['status'] in ('pending','waitlisted','confirmed'):
+        same=(existing['party_size']==party and bool(existing['auto_confirm'])==auto
+              and json.loads(existing['meeting_origin'])==pickup and json.loads(existing['meeting_destination'])==dropoff)
+        require(same,'You already have an active request for this date. Withdraw it before changing its terms.',409)
+        return existing['id']  # Retry preserves queue order, status, price and event history.
+    require(o['role']!='rider' or o['driver_id'] is None, 'This rider already accepted a driver.',409)
+
     values = (party,int(auto),json.dumps(pickup),json.dumps(dropoff),now().timestamp())
+    from .pricing import occurrence_pricing
+    pricing=occurrence_pricing(db,o,party)
+    request_price=pricing['rider_price_cents'] if pricing else o['price_cents']
     if existing:
         aid = existing['id']
-        db.execute("UPDATE applications SET status='pending',party_size=?,auto_confirm=?,meeting_origin=?,meeting_destination=?,created_at=?,agreed_price_cents=? WHERE id=?",(*values,o['price_cents'],aid))
+        db.execute("UPDATE applications SET status='pending',cancel_reason=NULL,party_size=?,auto_confirm=?,meeting_origin=?,meeting_destination=?,created_at=?,agreed_price_cents=? WHERE id=?",(*values,request_price,aid))
     else:
-        aid = db.execute("INSERT INTO applications(occurrence_id,requester_id,status,party_size,auto_confirm,meeting_origin,meeting_destination,created_at,agreed_price_cents) VALUES(?,?,'pending',?,?,?,?,?,?)",(oid,user['id'],*values,o['price_cents'])).lastrowid
+        aid = db.execute("INSERT INTO applications(occurrence_id,requester_id,status,party_size,auto_confirm,meeting_origin,meeting_destination,created_at,agreed_price_cents) VALUES(?,?,'pending',?,?,?,?,?,?)",(oid,user['id'],*values,request_price)).lastrowid
     event(db,oid,user['id'],user['name']+' sent '+('a ride offer.' if o['role']=='rider' else 'a seat request.'))
     return aid
 
@@ -661,7 +700,7 @@ def cancel_occurrence(db, user, oid):
     return [a['id'] for a in affected]
 
 
-def republish_canceled_request(db, user, aid):
+def republish_canceled_request(db, user, aid, *, google_only=False):
     """Turn a driver-canceled request into the rider's own open post (Still pending)."""
     a=db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone()
     require(a is not None,'Request not found.',404)
@@ -680,6 +719,10 @@ def republish_canceled_request(db, user, aid):
     if arrive_by<=departure:
         arrive_by=min(23,departure+1)
     price=a['agreed_price_cents'] if a['agreed_price_cents'] is not None else o['price_cents']
+    meta={'mode':'republished','from_application_id':aid}
+    if google_only:
+        price=0
+        meta.update(mode='automatic',status='pending',notice='Waiting for a Google Maps quote for the republished meeting points.')
     detour=db.execute('SELECT detour_minutes FROM trips WHERE id=?',(o['trip_id'],)).fetchone()
     note=(o.get('note') or '').strip()
     if note:
@@ -693,7 +736,7 @@ def republish_canceled_request(db, user, aid):
         seats=a['party_size'],price_cents=price,
         detour_minutes=detour['detour_minutes'] if detour else 10,
         note=note[:1000],return_hour=o['return_hour'] if kind=='round' else None,
-        _price_meta={'mode':'republished','from_application_id':aid},
+        _price_meta=meta,
     ))
     db.execute("UPDATE applications SET cancel_reason='republished' WHERE id=?",(aid,))
     oid=db.execute('SELECT id FROM occurrences WHERE trip_id=? ORDER BY trip_date LIMIT 1',(tid,)).fetchone()[0]
@@ -730,14 +773,21 @@ def application_views(db,user):
         JOIN trips t ON t.id=o.trip_id JOIN users owner ON owner.id=t.owner_id
         WHERE (a.requester_id=? OR t.owner_id=?) AND coalesce(a.cancel_reason,'')!='republished'
         ORDER BY a.created_at DESC,a.id DESC''',(user['id'],user['id'])).fetchall()
-    result=[]
+    result=[];series_cache={}
     for row in rows:
         r=dict(row)
         effective=joined_occurrence(db,r['occurrence_id'])
+        if json.loads(effective['price_meta']).get('retired_setup'):continue
+        from .pricing import price_status
+        r['pricing_status']=price_status(effective['price_meta'])
         for key in ('origin','destination','departure_hour','price_cents','kind'):
             r[key]=effective[key]
         if r['agreed_price_cents'] is None:
             r['agreed_price_cents']=r['price_cents']
+        from .pricing import occurrence_pricing
+        r['pricing']=occurrence_pricing(db,effective,r['party_size'] if r['status'] in ('pending','waitlisted') else 0)
+        if r['pricing'] and r['status'] in ('pending','waitlisted','confirmed'):
+            r['agreed_price_cents']=r['pricing']['rider_price_cents']
         r['total_price_cents']=r['agreed_price_cents']*r['party_size']
         from .features import rating_summary
         r['counterparty_rating']=rating_summary(db,r['requester_id'] if r['owner_id']==user['id'] else r['owner_id'],('rider' if r['role']=='driver' else 'driver') if r['owner_id']==user['id'] else r['role'])
@@ -761,6 +811,10 @@ def application_views(db,user):
         r['identity_revealed']=requester_revealed if r['incoming'] else owner_revealed
         r['closed']=r['occurrence_status']!='active' or dt.datetime.combine(date_value(r['trip_date']),dt.time(r['departure_hour']),ZONE)<=now()
         r['was_matched']=was_matched
+        if r['recurring_id']:
+            from .recurring import series_info
+            if r['recurring_id'] not in series_cache:series_cache[r['recurring_id']]=series_info(db,r['recurring_id'])
+            r['series']=series_cache[r['recurring_id']]
         result.append(r)
     return result
 

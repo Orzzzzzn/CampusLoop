@@ -1,0 +1,41 @@
+'use strict';
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const nodes=new Map();
+function element(){return {innerHTML:'',textContent:'',hidden:false,open:false,classList:{toggle(){}},addEventListener(){},showModal(){this.open=true},close(){this.open=false}}}
+const select=s=>{if(!nodes.has(s))nodes.set(s,element());return nodes.get(s)};
+const document={querySelector:select,querySelectorAll:()=>[],addEventListener(){}};
+const p={capacity:4,rider_count:2,driver_earnings_cents:1980,rider_price_cents:990,earnings_min_cents:1200,earnings_max_cents:3540,price_min_cents:885,price_max_cents:1200,distance_miles:10,duration_minutes:20};
+const calls=[];
+const context=vm.createContext({document,console,setTimeout,clearTimeout,FormData:class{constructor(f){this.f=f}get(k){return this.f.fields[k]}getAll(k){return this.f.fields[k]||[]}},
+ fetch:async(path,options)=>{calls.push([path,JSON.parse(options.body)]);return {ok:true,headers:{get:()=> 'application/json'},json:async()=>({pricing:p,price_cents:1200,formula:'fixture formula',notice:'fixture notice',legs:1})}}});
+vm.runInContext(fs.readFileSync(fs.readFileSync(0,'utf8').trim(),'utf8').replace(/\nboot\(\);\s*$/,''),context);
+context.p=p;
+(async()=>{
+ assert.equal(vm.runInContext('priceRange(p,true)',context),'Estimated Earnings: $12.00 – $35.40');
+ assert.equal(vm.runInContext('priceRange(p)',context),'Estimated Price: $8.85 – $12.00 / rider');
+ const form={id:'post-form',isConnected:true,elements:{price_mode:{value:'automatic'},price:{value:''}},querySelector:s=>select(s==='#price-quote'?'#quote':s),fields:{role:'driver',seats:4,kind:'one',start_date:'2030-01-01',departure_hour:8,return_hour:17,weekdays:[]}};
+ context.form=form;
+ vm.runInContext('readLocation=()=>({label:"fixture place",lat:34,lon:-118,mode:"exact"})',context);
+ await vm.runInContext('updateQuote(form)',context);
+ assert(select('#quote').innerHTML.includes('Estimated Earnings: $12.00 – $35.40'));
+ assert(select('#quote').innerHTML.includes('1–4 riders · Based on estimated traffic'));
+ assert(select('#quote').innerHTML.includes('<details class="pricing-explanation"><summary>How pricing works</summary>'));
+ assert(!select('#quote').innerHTML.split('<details')[0].includes('Google Maps'));
+ assert.equal(select('#quote-route-info').textContent,'10 mi · ~20 min · Google Maps');
+ assert.equal(select('#quote-route-info').hidden,false);
+ assert.equal(calls[0][1].seats,4);
+ form.fields.role='rider';await vm.runInContext('updateQuote(form)',context);
+ assert(select('#quote').innerHTML.includes('Estimated Price: $8.85 – $12.00 / rider'));
+ assert(select('#quote').innerHTML.includes('Final price depends on confirmed rider count'));
+ context.b={dataset:{application:'42',action:'accept'}};
+ await vm.runInContext('confirmPricing(b)',context);
+ assert.equal(calls.at(-1)[0],'/api/applications/42/price');
+ assert(select('#modal-content').innerHTML.includes('Current price / rider'));
+ assert(select('#modal-content').innerHTML.includes('$9.90'));
+ assert(select('#modal-content').innerHTML.includes('data-rider-count="2"'));
+ vm.runInContext('route=()=>"<div>Route fixture</div>";app.rides=[{id:7,is_owner:true,role:"rider",driver_id:null,kind:"one",pricing:p}]',context);
+ await vm.runInContext('showRide(7)',context);
+ assert(select('#modal-content').innerHTML.includes('Estimated Price: $8.85 – $12.00 / rider'));
+ assert(!select('#modal-content').innerHTML.includes('Budget:'));
+ console.log('PASS: posting earnings, rider range, Google metrics and current-price confirmation');
+})().catch(e=>{console.error(e);process.exitCode=1});

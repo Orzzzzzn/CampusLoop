@@ -12,6 +12,7 @@ services:
       STUDENT_DOMAINS: "${STUDENT_DOMAINS:-usc.edu}"
       GEOCODER_URL: "${GEOCODER_URL:-https://photon.komoot.io/api/}"
       ROUTER_URL: "${ROUTER_URL:-https://router.project-osrm.org/route/v1/driving}"
+      GOOGLE_MAPS_API_KEY: "${GOOGLE_MAPS_API_KEY:-}"
       COOKIE_SECURE: "${COOKIE_SECURE:-0}"
       OLLAMA_URL: "http://ollama:11434"
       # 0.5b keeps CPU answers usable; set CHAT_MODEL=qwen2.5:1.5b for higher quality.
