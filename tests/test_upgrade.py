@@ -94,14 +94,15 @@ class UpgradeTests(unittest.TestCase):
             upgrade.verify_server(8010,'2.2.0',attempts=1)
 
     def test_matching_script_with_stale_css_is_rejected(self):
+        version=upgrade.release_version(upgrade.ROOT)
         @contextlib.contextmanager
         def stale_style(url,**kwargs):
-            if url.endswith('/health'):body=b'{"app":"CampusLoop","version":"2.2.0"}'
+            if url.endswith('/health'):body=json.dumps({'app':'CampusLoop','version':version}).encode()
             elif '/static/style.css' in url:body=b'/* outdated stylesheet */'
             elif '/static/app.js' in url:body=(upgrade.ROOT/'static/app.js').read_bytes()
             else:body=(upgrade.ROOT/'static/index.html').read_bytes()
             yield io.BytesIO(body)
         with patch.object(upgrade.urllib.request,'urlopen',side_effect=stale_style),self.assertRaisesRegex(upgrade.UpgradeError,'do not match'):
-            upgrade.verify_server(8010,'2.2.0',attempts=1)
+            upgrade.verify_server(8010,version,attempts=1)
 
 if __name__=='__main__':unittest.main()
