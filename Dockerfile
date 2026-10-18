@@ -1,5 +1,5 @@
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOST=0.0.0.0 PORT=8000 DATABASE_PATH=/app/data/campusloop.sqlite3
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOST=0.0.0.0 PORT=8000 DATABASE_PATH=/app/data/heky.sqlite3
 WORKDIR /app
 RUN groupadd --gid 10001 campusloop && useradd --uid 10001 --gid campusloop --no-create-home campusloop && mkdir /app/data && chown campusloop:campusloop /app/data
 COPY --chown=campusloop:campusloop app /app/app

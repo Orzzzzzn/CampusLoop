@@ -1,31 +1,41 @@
-# CampusLoop verification record
+# CampusLoop 2.2.0 verification record
 
-Verification date: 2026-10-17. Runtime: Python 3.12.
+Verification date: 2026-10-18. Runtime: Python 3.12 and Node.js 24.
 
 ## Executed successfully
 
-- **21 Python tests passed** using actual local HTTP servers and temporary SQLite databases.
-- All upcoming dates and both post roles are listed without a default date/role filter. Specific dates, date ranges, and inclusive departure-hour windows combine correctly; invalid windows are rejected.
-- Both pickup and drop-off areas must match when both filters are supplied. A matching pickup with an unrelated destination is excluded. Results sort by distance from the requested locations. Suggested meeting points lie in both overlapping circles, including overlap where neither center lies inside the other circle.
-- Board responses, incoming/outgoing requests, activity, and RAG documents mask other users' names before confirmation. Confirmed participants see real names. Third-party viewers and waitlisted users still see aliases. Canceling restores the alias for the former participant; promotion reveals names to the newly confirmed user.
-- Upgrade from the previous schema preserves account, trip, occurrence, application, and session records. Existing password hashes still validate. The persisted alias salt survives repeated initialization. Session cookies use `campusloop_session`.
-- Place-search endpoint, bundled places, HTTP geocoder response parsing, rounded search bias, caching, invalid coordinates, rate limiting, and unavailable-provider behavior passed. The online geocoder was exercised against an explicit local Photon-format HTTP fixture, not the public service.
-- Existing authentication, CSRF, ownership, rider-offer acceptance, concurrent seat approvals, concurrent manual waitlist claims, automatic promotion, recurring-date isolation, private persisted chat, student verification, round-trip cancellation, and first actual recurrence date tests passed.
-- RAG embedding and generation HTTP contracts, cache reuse, and citation handling passed with a local HTTP fixture. The fixture does not run a language model. The model-unavailable path returns retrieved sources with `answer: null`.
-- A separate `python3 -m app.server` process started on the native default port **8010**. Health identified CampusLoop and a working database. HTML, JavaScript, CSS, configuration, cookie sign-in followed by `/api/me`, and all-date/all-role ride listing returned successfully.
-- `node --check` on the split frontend modules (`api.js`, `map.js`, `views.js`, `events.js`), Python parsing, and compilation passed.
-- Compose YAML parsed successfully; app/Ollama/model-init services, port 8010 binding, internal port 8000, escaped model environment variables, and the existing database volume key were checked.
-- Project source and documentation scan found no Korean text. User-created database content is preserved as entered.
+**46 tests passed** using temporary SQLite databases and actual local HTTP servers. No real user database was used.
+
+- Find a ride separates regular rides from one-time/round trips. My rides filters specific dates and inclusive departure-hour windows, distinguishes actual drivers from confirmed passengers, and shows driver name, vehicle, role-specific rating and agreed prices. Driver offers accepted by a rider post resolve to the actual offering driver.
+- One-date recurring exceptions change only that occurrence's schedule and notes, apply before search filters and request views, and reject edits with active requests. Owner and passenger week-only cancellations affect the selected Monday–Sunday week, preserve later weeks, and promote eligible waitlisted passengers where seats open.
+- All four fresh Demo Lab cases were exercised through HTTP: automatic promotion, manual claim, whole-party fit, and pending requests excluded from promotion. A second batch works in an existing database without resetting original trips. Cross-user release is rejected and disabled demo mode rejects the lab endpoints.
+- Completed-ride ratings reject premature and nonparticipant votes, enforce 1–5 stars, and update one existing vote without increasing the count. Public averages and counts retain anonymous names. Past ride views expose eligible rating targets.
+- Automatic cost-share computation uses server-calculated route miles, rounding, lower/upper bounds and round-trip multiplication. Request-time price snapshots survive a later stored post-price change and appear in confirmed rides and application party totals.
+- Recommendation sorting and explanations rank the requested route, departure time, listed cost/budget, role-specific rating and available seats after filtering. Alternative sort validation passed.
+- OSRM-format HTTP fixture tests verify real geometry parsing, distance and estimated duration, a named User-Agent, query options, cache reuse, queued distinct routes, automatic pricing and explicitly labelled offline approximation. No public routing call is required by the suite.
+- The production JavaScript ran against the real Python API through a minimal document/form adapter. Verified boot/session, empty location defaults, explicit place selection, both-end area search, date/hour filters, unresolved-address protection, post/request/accept flows, anonymous icons, confirmed real names/initials, role tabs, My rides date retention, driver details, prices, route SVG markup, Demo Lab release/manual claim, completed-ride rating, one-date editing and week-only skipping. This is a handler/HTML contract check, not browser layout testing.
+- Additive migration from the old column layout preserves users, password hashes and booking states, adding price snapshots and occurrence overrides without a reset. Older sample-marker suffix cleanup preserves coordinates and bookings. Legacy cookie compatibility passed.
+- Existing authentication, CSRF, ownership, concurrent capacity/claim decisions, whole-party allocation, recurring-date isolation, round-trip handling, student verification and persisted private chat regression checks passed.
+- Place lookup, Photon-format HTTP parsing, bias, cache, validation, rate limits and failure behavior passed. Broad region searches are not silently replaced by saved stations.
+- RAG embedding/generation HTTP contracts, caching, permission-filtered ride sources, citations and explicit model-unavailable behavior passed using a local fixture. Actual model inference is not performed by that fixture.
+- Updater Docker CLI fixture checks preserve the original project, build context, settings, port and database mount, create a source backup, and reject ambiguous or unpersisted storage. Old health responses, stale frontend contents, and stale CSS under a correct version badge are rejected.
+- A separate native `python3 -m app.server` process started successfully on an assigned local port with a temporary database. Live health returned CampusLoop 2.2.0 / API 2.2 / database ok. The updater verified complete served HTML, JavaScript and CSS against release hashes. Login, creation of six fresh examples and two completed ride views worked on that process.
+- Python compilation, JavaScript syntax checks, English-only source/documentation scan and ZIP integrity checks passed.
 
 ## Not executed
 
-Docker image build or Compose container startup, actual downloaded model inference, public Photon requests, SMTP delivery, online map tiles, browser geolocation, and rendered browser interaction were not executed in this environment. Docker and a browser runtime were unavailable. These checks are not reported as passing.
+Docker image construction, real Compose container recreation, public Photon/OSRM calls, actual downloaded Ollama models, live SMTP, online map tiles, geolocation and full browser rendering/click verification were not executed. Docker is unavailable in this runtime. The earlier cloud browser could not reach the runtime's localhost and its URL policy disallowed local file previews. No bypass was attempted.
 
-Run the included tests from the project root:
+The update is not marked successful on the user's computer until `upgrade.py` verifies its actual running server and served frontend. Existing user-authored content remains as entered. Demo Lab records and ratings are explicitly synthetic development examples.
+
+## Repeat
+
+From `heky/`:
 
 ```bash
 python3 -m unittest discover -s tests -v
-node --check static/api.js static/map.js static/views.js static/events.js
+node --check static/app.js
+node --check tests/frontend_contract.cjs
 ```
 
-See README.md for startup, updates that preserve existing data, model readiness, privacy behavior, and location-search configuration.
+Node.js 18+ is optional for the JavaScript handler test; without it, that one test is skipped. The application itself uses Python's standard library and does not require Node.

@@ -1,5 +1,8 @@
 """Real HTTP/SQLite integration tests; external inference uses an explicit HTTP fixture."""
 import concurrent.futures
+import copy
+import shutil
+import subprocess
 import datetime as dt
 import http.cookiejar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,8 +14,7 @@ import unittest
 import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlsplit
-from app.domain import (Store, PLACES, DEFAULT_DEMO_PASSWORD, location, overlaps, Problem,
-    check_password, distance_miles, shared_meeting_point)
+from app.domain import Store, PLACES, location, overlaps, Problem, check_password, distance_miles, shared_meeting_point
 from app.places import Places
 from app.rag import Ollama, RAG
 from app.server import App, Server
@@ -28,14 +30,14 @@ class Client:
             with self.opener.open(req,timeout=15) as r:return r.status,json.load(r)
         except urllib.error.HTTPError as exc:return exc.code,json.load(exc)
     def login(self,email):
-        code,r=self.call('/api/auth/login',{'email':email+'@usc.edu','password':DEFAULT_DEMO_PASSWORD})
+        code,r=self.call('/api/auth/login',{'email':email+'@usc.edu','password':'heky-local-2026'})
         assert code==200,r
         self.csrf=r['csrf']
         return r['user']
 
 class AppTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.store=Store(Path(self.temp.name)/'campusloop.sqlite3')
+        self.temp=tempfile.TemporaryDirectory();self.store=Store(Path(self.temp.name)/'heky.sqlite3')
         self.app=App(self.store,demo_mode=True);self.server=Server(('127.0.0.1',0),self.app)
         self.thread=threading.Thread(target=self.server.serve_forever,kwargs={'poll_interval':.01},daemon=True);self.thread.start()
         self.base='http://127.0.0.1:'+str(self.server.server_port);self.clients={}
@@ -64,7 +66,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.clients['leo'].call(f'/api/applications/{aid}/accept',{})[0],403)
         self.assertEqual(self.status('jamie',aid),'pending')
         with urllib.request.urlopen(self.base) as r:
-            html=r.read();self.assertIn(b'/static/api.js',html);self.assertIn(b'/static/events.js',html);self.assertIn('frame-ancestors',r.headers['Content-Security-Policy'])
+            self.assertIn(b'/static/app.js',r.read());self.assertIn('frame-ancestors',r.headers['Content-Security-Policy'])
         self.clients['jamie'].call('/api/auth/logout',{})
         self.assertEqual(self.clients['jamie'].call('/api/me')[0],401)
     def test_rider_offer_accept_and_cancel(self):
@@ -142,7 +144,7 @@ class AppTests(unittest.TestCase):
             self.app.rag=RAG(self.store,Ollama(f'http://127.0.0.1:{server.server_port}'))
             code,result=self.clients['jamie'].call('/api/rag/ask',{'question':'How do cancellation and waitlist work?','filters':{'date':self.date}})
             self.assertEqual(code,200,result);self.assertEqual(result['mode'],'rag');self.assertTrue(result['sources'])
-            self.assertNotIn('password_hash',json.dumps(result));self.assertNotIn(DEFAULT_DEMO_PASSWORD,json.dumps(result))
+            self.assertNotIn('password_hash',json.dumps(result));self.assertNotIn('heky-local-2026',json.dumps(result))
         finally:server.shutdown();server.server_close();thread.join(2)
 
     def test_recurring_creation_returns_first_actual_date(self):
@@ -228,7 +230,7 @@ class AppTests(unittest.TestCase):
         promoted=next(r for r in self.search('leo') if r['id']==ride['id'])
         self.assertEqual(promoted['owner_name'],'Mina Park');self.assertTrue(promoted['identity_revealed'])
 
-    def test_old_database_upgrade_and_session_cookie(self):
+    def test_old_database_upgrade_and_legacy_cookie(self):
         ride=self.create()
         with self.store.tx() as db:
             counts={t:db.execute('SELECT count(*) FROM '+t).fetchone()[0] for t in ['users','trips','occurrences','applications','sessions']}
@@ -237,19 +239,56 @@ class AppTests(unittest.TestCase):
         upgraded=Store(self.store.path)
         with upgraded.read() as db:
             for table,count in counts.items():self.assertEqual(db.execute('SELECT count(*) FROM '+table).fetchone()[0],count)
-            self.assertTrue(check_password(DEFAULT_DEMO_PASSWORD,db.execute("SELECT password_hash FROM users WHERE email='jamie@usc.edu'").fetchone()[0]))
+            self.assertTrue(check_password('heky-local-2026',db.execute("SELECT password_hash FROM users WHERE email='jamie@usc.edu'").fetchone()[0]))
             salt=db.execute("SELECT value FROM app_settings WHERE key='identity_salt'").fetchone()[0]
         with Store(self.store.path).read() as db:self.assertEqual(db.execute("SELECT value FROM app_settings WHERE key='identity_salt'").fetchone()[0],salt)
+        legacy=Client(self.base)
         for cookie in self.clients['jamie'].jar:
-            self.assertEqual(cookie.name,'campusloop_session')
-        self.assertEqual(self.clients['jamie'].call('/api/me')[0],200)
-        self.assertEqual(self.clients['jamie'].call('/api/auth/logout',{})[0],200)
-        self.assertEqual(self.clients['jamie'].call('/api/me')[0],401)
+            old=copy.copy(cookie);self.assertEqual(old.name,'campusloop_session');old.name='heky_session';legacy.jar.set_cookie(old)
+        self.assertEqual(legacy.call('/api/me')[0],200)
+        legacy.csrf=self.clients['jamie'].csrf
+        self.assertEqual(legacy.call('/api/auth/logout',{})[0],200);self.assertEqual(legacy.call('/api/me')[0],401)
 
     def test_place_search_endpoint_and_bad_bias(self):
         code,result=self.clients['jamie'].call('/api/places/search',{'query':'USC'})
         self.assertEqual(code,200,result);self.assertTrue(result['places']);self.assertEqual(result['source'],'catalog')
         self.assertEqual(self.clients['jamie'].call('/api/places/search',{'query':'USC','bias':'invalid'})[0],422)
+
+    def test_old_location_suffix_is_migrated_without_changing_bookings(self):
+        ride=self.create();aid=self.apply('jamie',ride)
+        with self.store.tx() as db:
+            trip=db.execute('SELECT origin,destination FROM trips WHERE id=?',(ride['trip_id'],)).fetchone()
+            app=db.execute('SELECT meeting_origin,meeting_destination FROM applications WHERE id=?',(aid,)).fetchone()
+            for table,key,fields,row in [('trips',ride['trip_id'],('origin','destination'),trip),('applications',aid,('meeting_origin','meeting_destination'),app)]:
+                for field in fields:
+                    point=json.loads(row[field]);point['label']+=' (sample pin)'
+                    db.execute('UPDATE '+table+' SET '+field+'=? WHERE id=?',(json.dumps(point),key))
+            db.execute("INSERT INTO place_cache VALUES('legacy',?,9999999999)",(json.dumps({'places':[{'label':'Legacy (sample pin)'}]}),))
+        Store(self.store.path)
+        current=next(r for r in self.search() if r['id']==ride['id'])
+        self.assertEqual(current['origin'],ride['origin']);self.assertEqual(current['destination'],ride['destination'])
+        self.assertEqual(self.status('jamie',aid),'pending')
+        with self.store.read() as db:
+            row=db.execute('SELECT meeting_origin FROM applications WHERE id=?',(aid,)).fetchone()
+            self.assertNotIn('sample pin',row['meeting_origin']);self.assertEqual(json.loads(row['meeting_origin'])['lat'],ride['origin']['lat'])
+            self.assertIsNone(db.execute("SELECT 1 FROM place_cache WHERE cache_key='legacy'").fetchone())
+
+    @unittest.skipUnless(shutil.which('node'),'Node.js is optional for frontend handler checks')
+    def test_frontend_handlers_and_rendered_contract_against_live_api(self):
+        viewer=Client(self.base)
+        code,registration=viewer.call('/api/auth/register',{'name':'Riley Taylor','email':'riley-ui@usc.edu','password':'local-ui-fixture-2026'})
+        self.assertEqual(code,201,registration)
+        code,verified=viewer.call('/api/auth/verify',{'email':registration['email'],'code':registration['development_code']})
+        self.assertEqual(code,200,verified);viewer.csrf=verified['csrf']
+        sessions={}
+        for name,client in [('viewer',viewer),('owner',self.clients['mina'])]:
+            me=client.call('/api/me')[1]
+            sessions[name]={'cookie':'; '.join(cookie.name+'='+cookie.value for cookie in client.jar),'csrf':client.csrf,'user':me['user']}
+        root=Path(__file__).resolve().parents[1]
+        payload=dict(base=self.base,sessions=sessions,js=str(root/'static/app.js'),date=self.date,places=PLACES)
+        result=subprocess.run(['node',str(root/'tests/frontend_contract.cjs')],input=json.dumps(payload),text=True,capture_output=True,timeout=35)
+        self.assertEqual(result.returncode,0,result.stdout+'\n'+result.stderr)
+        self.assertIn('PASS:',result.stdout)
 
 
 class PlaceFixture(BaseHTTPRequestHandler):
@@ -265,6 +304,14 @@ class PlaceFixture(BaseHTTPRequestHandler):
 
 
 class PlaceTests(unittest.TestCase):
+    def test_region_search_is_not_replaced_with_an_arbitrary_saved_station(self):
+        with tempfile.TemporaryDirectory() as path:
+            places=Places(Store(Path(path)/'db.sqlite'),'')
+            for query in ['Koreatown','Pasadena','Santa Monica']:
+                with self.assertRaises(Problem) as exc:places.search(query)
+                self.assertEqual(exc.exception.status,503)
+            self.assertTrue(places.search('Wilshire')['places'])
+
     def test_http_geocoder_bias_cache_validation_and_rate_limit(self):
         with tempfile.TemporaryDirectory() as path:
             store=Store(Path(path)/'db.sqlite')
