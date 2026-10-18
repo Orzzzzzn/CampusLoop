@@ -116,8 +116,19 @@ def my_rides(db,user,criteria=None):
             "SELECT count(*) FROM applications WHERE occurrence_id=? AND status='pending'",
             (r['id'],),
         ).fetchone()[0] if r['my_role']=='pending' else 0
+        # Driver-facing: pending = awaiting approval (not waitlist). Waitlist appears only after accept.
+        r['pending_requests']=db.execute(
+            "SELECT count(*) FROM applications WHERE occurrence_id=? AND status='pending'",
+            (r['id'],),
+        ).fetchone()[0] if r['my_role']=='driver' else 0
+        r['waitlisted_parties']=db.execute(
+            "SELECT count(*) FROM applications WHERE occurrence_id=? AND status='waitlisted'",
+            (r['id'],),
+        ).fetchone()[0] if r['my_role']=='driver' else 0
         r['can_edit_date']=not r['price_meta'].get('retired_setup') and r['is_owner'] and r['kind']=='regular' and not r['departed'] and not db.execute("SELECT 1 FROM applications WHERE occurrence_id=? AND status IN ('pending','waitlisted','confirmed')",(r['id'],)).fetchone()
         rides.append(r)
+    # Upcoming/My rides always list soonest first regardless of board search defaults.
+    rides.sort(key=lambda r:(r['trip_date'],r['departure_hour'],r['id']))
     return rides
 
 

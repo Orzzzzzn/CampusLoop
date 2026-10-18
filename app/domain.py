@@ -527,7 +527,7 @@ def list_trips(db, actor_id, criteria=None):
         r['match_type']='both_locations' if origin_filter and dest_filter else 'pickup' if origin_filter else 'dropoff' if dest_filter else None
         r['recommendation']=recommend(r,criteria)
         output.append(r)
-    sort=criteria.get('sort','nearest')
+    sort=criteria.get('sort') or 'recommended'
     require(sort in ('nearest','recommended','soonest','price'),'Invalid sorting option.')
     if sort=='recommended':
         return sorted(output,key=lambda r:(-r['recommendation']['score'],r['trip_date'],r['departure_hour'],r['id']))
@@ -780,7 +780,7 @@ def application_views(db,user):
         if json.loads(effective['price_meta']).get('retired_setup'):continue
         from .pricing import price_status
         r['pricing_status']=price_status(effective['price_meta'])
-        for key in ('origin','destination','departure_hour','price_cents','kind'):
+        for key in ('origin','destination','departure_hour','return_hour','price_cents','kind'):
             r[key]=effective[key]
         if r['agreed_price_cents'] is None:
             r['agreed_price_cents']=r['price_cents']

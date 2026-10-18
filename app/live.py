@@ -8,6 +8,8 @@ from .domain import (Store, PLACES, ZONE, hash_password, now, today, trip_create
 
 KEY='live-rides:v2'
 PREVIOUS_KEY='live-rides:v1'
+LEGACY_SEED_EMAILS=('jamie@usc.edu','mina@usc.edu','sofia@usc.edu','daniel@usc.edu','leo@usc.edu','ethan@usc.edu')
+LEGACY_RETIRE_KEY='legacy-seed:retire:v1'
 # Labels describe travel plans, not precomputed booking scenarios.
 ROUTES=[
  ('class',0,4,'regular',13,2,'Weekly class commute. Meet at the station entrance.'),
@@ -38,11 +40,34 @@ def accounts_config(db):
     return {}
 
 
+def retire_legacy_seed_posts(store):
+    """Hide older Jamie/Mina/Sofia fixtures from Find a ride once live demo accounts exist."""
+    with store.tx() as db:
+        if db.execute('SELECT 1 FROM app_settings WHERE key=?',(LEGACY_RETIRE_KEY,)).fetchone():return
+        if not db.execute('SELECT 1 FROM app_settings WHERE key=?',(KEY,)).fetchone():return
+        for email in LEGACY_SEED_EMAILS:
+            owner=db.execute('SELECT id FROM users WHERE email=?',(email,)).fetchone()
+            if not owner:continue
+            for trip in db.execute('SELECT id,price_meta FROM trips WHERE owner_id=?',(owner['id'],)):
+                meta=json.loads(trip['price_meta'] or '{}')
+                if meta.get('retired_setup'):continue
+                meta['retired_setup']=True
+                db.execute('UPDATE trips SET price_meta=? WHERE id=?',(json.dumps(meta),trip['id']))
+        db.execute('INSERT INTO app_settings(key,value) VALUES(?,?)',(LEGACY_RETIRE_KEY,'1'))
+
+
 def prepare(store):
     """Add real offers once, with no applications, confirmations, or fixed prices."""
     with store.tx() as db:
         saved=db.execute('SELECT value FROM app_settings WHERE key=?',(KEY,)).fetchone()
-        if saved:return json.loads(saved['value'])
+        if saved:
+            result=json.loads(saved['value'])
+        else:
+            result=None
+    if result:
+        retire_legacy_seed_posts(store)
+        return result
+    with store.tx() as db:
         accounts={};old_ids=[];known={}
         previous=db.execute('SELECT value FROM app_settings WHERE key=?',(PREVIOUS_KEY,)).fetchone()
         if previous:
@@ -96,7 +121,8 @@ def prepare(store):
             routes[key]=tid
         result=dict(accounts=accounts,routes=routes,retired_trip_ids=old_ids)
         db.execute('INSERT INTO app_settings(key,value) VALUES(?,?)',(KEY,json.dumps(result)))
-        return result
+    retire_legacy_seed_posts(store)
+    return result
 
 
 class GooglePrices:

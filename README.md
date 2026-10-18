@@ -1,179 +1,414 @@
-# CampusLoop 2.5.0
+# CampusLoop
 
-CampusLoop is a Python / SQLite carpool app with a shared landing page, place-and-radius matching, recurring rides, waitlists, Google traffic-aware pricing and a local RAG assistant. Python 3.11+ is required; no third-party Python packages are needed.
+**Share the route. Split the cost. Ride together.**
 
-## This release
+CampusLoop is a student-focused carpooling platform designed to make transportation more affordable, convenient, and accessible within university communities.
 
-Recurring rides display their published start date, end date and weekdays. **One request covers every remaining future active date in that period; one owner approval confirms every available date and approves the waitlist on full dates.** No weekly reapplication or approval is needed. Prices, capacity, identities and weekly exceptions remain date-specific. Recurring offers and requests are grouped in the board and Requests; My rides keeps individual dates for cancellations.
+Unlike traditional ride-hailing services, CampusLoop connects students who are already planning to travel in similar directions. Both riders and drivers can post upcoming trips, discover compatible routes, and coordinate shared journeys.
 
-Existing active recurring requests are extended once during upgrade: pending requests stay pending until owner approval; already confirmed or approved-waitlist requests keep that approval for remaining dates. Canceled weeks are preserved. The extension waits for valid Google prices on all dates and retains conflicting legacy terms for review rather than overwriting agreements. Past records, accounts and passwords are retained.
+Initially developed for the **University of Southern California (USC)** community, CampusLoop aims to expand into a connected transportation network across universities.
 
-There is no Ride example selector, lettered scenario label or preset-booking page. Local accounts operate the normal app. Ten prepared posts start with **zero applications**: riders must request, owners must accept, and participants must cancel through the actual API and database.
+---
 
-All upcoming active ride dates use **real Google Maps Routes API quotes**, including existing posts, rider requests and each recurring date. Manual entry is removed from new posts. The old fixed $4 setup is removed from the default flow. No key or failed route data means **Google price unavailable** and booking is blocked until a valid quote is saved. A successful route quote supplies distance, traffic-aware time, quote timestamp and rider-count pricing. The app never calls a manual or synthetic price a Google quote.
+## Tech Stack
 
-The landing page explains why the service helps drivers and riders, Post → Request → Accept, the pricing equations, and planned service-area expansion and pickup stops. Pickup stops are future work, not an implemented feature.
+| Component | Technology |
+|---|---|
+| Frontend | HTML, CSS, JavaScript |
+| Backend | Python |
+| Database | SQLite |
+| Map Visualization | OpenStreetMap |
+| Routing & Travel Estimation | Google Maps Routes API |
+| AI Chatbot | Ollama |
+| Containerization | Docker, Docker Compose |
+| Version Control | Git, GitHub |
 
-## Update the existing app on port 8010
+## Getting Started
 
-Extract this archive to `~/Downloads/CampusLoop-2.5.0`, start Docker Desktop and run:
+### Prerequisites
 
-```bash
-python3 ~/Downloads/CampusLoop-2.5.0/upgrade.py --port 8010
-```
+Install the following tools before running the application locally:
 
-This preserves the running Compose project, database, accounts, passwords, mounts and existing key/settings. It updates the actual build folder, backs up source files and replaces bundled guidance while retaining custom documents. It rebuilds only the app and verifies the actual served backend, HTML, JavaScript, CSS and landing assets. Source backups are not database backups.
+- [Git](https://git-scm.com/downloads)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- A code editor, such as [Visual Studio Code](https://code.visualstudio.com/)
 
-If the old Compose folder has moved or disappeared:
+A Google Maps API key is required to enable Google Maps Routes API functionality.
 
-```bash
-python3 ~/Downloads/CampusLoop-2.5.0/upgrade.py \
-  --compose-dir ~/Downloads/CampusLoop-2.5.0 --port 8010
-```
-
-Recovery retains the exact live database and app environment in a private Compose configuration. Ambiguous containers, unpersisted databases and code bind mounts hiding the new release stop before recreation. `--dry-run` inspects without updating. No volume deletion or Docker prune is used.
-
-Open [http://127.0.0.1:8010](http://127.0.0.1:8010) and refresh with **Cmd+Shift+R**. Check:
-
-```bash
-curl http://127.0.0.1:8010/health
-```
-
-Expect CampusLoop 2.5.0 and database ok. `google_maps: configured` means a server key is present; it does not establish that Google accepted the key or returned a route. Successful priced cards show the Google distance/time and current contribution.
-
-## Apply a Google key to an existing installation
-
-If a key is already configured on the running container, the updater keeps it. Otherwise create a local `.env` in this extracted release folder and fill in `GOOGLE_MAPS_API_KEY`:
+### 1. Clone the Repository
 
 ```bash
-cd ~/Downloads/CampusLoop-2.5.0
-cp .env.example .env
+git clone <REPOSITORY_URL>
+cd <REPOSITORY_DIRECTORY>
 ```
 
-Edit `.env`, enable Routes API and billing for that key's Google Cloud project, then run:
+All subsequent commands should be executed from the project root directory containing `compose.yaml`.
 
-```bash
-python3 ~/Downloads/CampusLoop-2.5.0/upgrade.py --port 8010 \
-  --google-env ~/Downloads/CampusLoop-2.5.0/.env
-```
+### 2. Configure Environment Variables
 
-`--google-env` explicitly applies **only** that file's `GOOGLE_MAPS_API_KEY`, using a private Compose override outside the source folder. It works even when the installation uses a retained recovery configuration. It checks that the recreated container received the key while retaining the original database. It does not print the key, replace other environment values or copy `.env` into the image. An absent/empty key stops before updating.
-
-Prepared route quotes load in the background so health, sign-in and the landing page can open immediately. The ride board refreshes while quotes load. A failed quote stays unavailable; **Retry route prices** retries unpriced prepared posts after the server configuration has been corrected. A quote already saved is not continuously re-requested. The key is backend-only.
-
-See [Google Routes documentation](https://developers.google.com/maps/documentation/routes/compute_route_directions) for `computeRoutes`, distance and duration fields, and traffic-aware driving requests.
-
-## First installation
-
-From the extracted folder:
+Copy the example environment configuration:
 
 ```bash
 cp .env.example .env
-# Edit .env and set GOOGLE_MAPS_API_KEY.
-docker compose up --build -d
 ```
 
-Open port 8010. Set `HEKY_PORT=8011` in `.env` if needed. Port 8000 is internal. `HEKY_PORT`, `heky_data`, the database filename and old cookie support are compatibility identifiers; the product is CampusLoop. Updating an existing app under a different Compose project can select a different database, so use the updater for an existing installation.
+Open `.env` and add your Google Maps API key:
+
+```dotenv
+GOOGLE_MAPS_API_KEY=YOUR_ACTUAL_API_KEY
+```
+
+If `.env` already exists, update the existing file instead.
+
+**Security:** Never commit `.env` or API credentials to GitHub. Ensure `.env` is included in `.gitignore`.
+
+For instructions on obtaining an API key, see [Google Maps Routes API Setup](#google-maps-routes-api-setup).
+
+### 3. Build and Run
+
+Make sure Docker Desktop is running.
+
+From the project root, execute:
 
 ```bash
-docker compose ps -a
-docker compose logs --tail=100 app model-init
-docker compose up model-init
-docker compose down
+HEKY_PORT=8010 docker compose up --build -d
 ```
 
-Stopping with `down` retains data/model volumes. Initial Ollama model download needs internet; search and booking do not use a cloud model key. No payments are collected.
+This command builds and starts the application's Docker services in the background.
 
-## Use the actual app
+### 4. Access the Application
 
-With `DEMO_MODE=1`, five local login accounts are available:
+Open your browser and navigate to:
 
-| Person | Default email | Vehicle / initial role |
-| --- | --- | --- |
-| Kate | kate@usc.edu | Honda Civic; posts driver offers |
-| Yelyn | yelyn@usc.edu | Requests seats; also has an open rider post |
-| Hannah | hannah@usc.edu | Requests a second passenger seat |
-| Emily | emily@usc.edu | Can request a full ride and join its approved waitlist |
-| Noah | noah@usc.edu | Can ride or offer to drive in a Toyota Prius |
+**http://localhost:8010**
 
-Default password: **heky-local-2026**. `DEMO_PASSWORD` applies only when a new local account is created. Existing accounts, passwords and profile edits are preserved; email collisions create separate `.demo` accounts shown on the sign-in screen. Use separate browser profiles/private windows for each person.
-
-Prepared posts cover ten routes with recurring, one-time, round-trip, one-seat and two-seat offers, plus a rider request. They are ordinary stored offers, not canned booking states. The first class offer is Wilshire / Vermont Station → USC Downey Way, Tuesdays at 13:00, two passenger seats, four dates. No applications are inserted at startup. See **[LIVE_TESTING.md](LIVE_TESTING.md)** for exact live steps and alternate branches.
-
-1. Kate uses her existing offer, or posts a recurring ride with an explicit start/end period, Tuesdays at 13:00, capacity two and Google Maps pricing.
-2. Yelyn requests the whole recurring period once. Kate opens Accept recurring period, reviews all date prices, and confirms once. All available Tuesdays are booked automatically.
-3. Hannah requests the same period once. Kate approves once; both seats are confirmed across the dates with capacity.
-4. Emily requests the period once. Kate approves once; full dates appear as approved waitlists, grouped under My waitlist. Waitlisted parties are excluded from confirmed-rider pricing.
-5. Yelyn selects the first date in My rides and chooses Can't make this week. Emily promotes into that week's opened seat; later bookings and waitlists stay unchanged. No second-Tuesday request is needed.
-6. Kate can skip another week without canceling the entire series. A requester can separately choose Cancel remaining recurring dates to leave the rest of the period.
-
-Requests and approvals cover the **remaining recurring period**. Repeated joins reuse the enrollment and its date applications without changing queue times or reopening weekly cancellations. Requests shows one group per recurring request and provides a per-date breakdown/filter. Sent and My waitlist have disjoint statuses; different dates in one series can legitimately be confirmed and waitlisted. My rides shows individual dates for weekly exceptions. One-time and round-trip requests retain their one-date behavior.
-
-## Start or perform the flow through the actual API
-
-The app starts with Kate's existing offer, **zero applications and no canceled dates**. Open Find a ride and use **Tuesday class commute → View ride offer**. This command only shows that initial offer; it does not create bookings:
+To verify that the containers are running:
 
 ```bash
-python3 ~/Downloads/CampusLoop-2.5.0/run_flow.py --base http://127.0.0.1:8010
+HEKY_PORT=8010 docker compose ps
 ```
 
-Then sign in as Yelyn and request a seat. Kate accepts; Hannah can request the second seat and Emily can join the approved waitlist. Perform each action in the ordinary app. To explicitly execute the entire sequence automatically on a separate new post, add `--perform-sequence`. That option creates real requests, confirmations and a cancellation; omit it when beginning the presentation.
+The application and Ollama services should appear in the container list.
 
-## Existing data and the recurring upgrade
+---
 
-A fresh local setup starts at Kate's Tuesday 13:00 offer: two passenger seats, four dates, zero applications. Other prepared posts are also unbooked. Updating an already-used 2.4.1 installation retains its current demo progress; this release does not reset it again.
+## External Services & APIs
 
-A one-time migration groups pre-upgrade future recurring requests by post and requester. Existing pending requests are extended as pending across the remaining period. Existing confirmed/driver-approved waitlist requests carry that approval forward, confirming dates with seats and waitlisting dates that are full. Existing confirmed rows keep their identities, timestamps and original stored agreements. Explicitly canceled weeks, past dates and canceled offers stay unchanged. The migration waits for Google prices and runs again when quote loading succeeds. If old party/meeting terms conflict across dates or a competing driver already holds a date, existing terms are retained for review.
+CampusLoop integrates several mapping, routing, and AI technologies to support ride planning and user assistance.
 
-New date-specific requests made after the upgrade are not reinterpreted by that migration. The production UI's normal recurring request covers the period; My rides still provides individual-date and week cancellations. **Cancel remaining recurring dates** withdraws all the requester's pending, confirmed and waitlisted future dates on that post, with a separate confirmation dialog. Repeated joins/approvals/withdrawals do not create duplicates or reopen canceled weeks. No database volume is deleted and account passwords/profiles are unchanged.
+### Google Maps Routes API
 
-Earlier generated preset offers remain archived from normal views. Their database history is retained. The old fixture endpoints/reset CLI stay disabled.
+The Google Maps Routes API provides information used for route planning and cost estimation.
 
-## Pricing
+Its capabilities include:
 
-```text
-Base Price per Rider = Distance × Rate per Mile + Estimated Travel Time × Rate per Minute
-Base = miles × $0.60 + minutes × $0.30
-Driver Earnings per Ride = Base × [1 + 0.65 × (n − 1)]
-Final Price per Rider = Driver Earnings per Ride / n
+- Driving distance between two locations
+- Estimated travel duration
+- Traffic-aware travel-time estimates
+- Route information for calculating suggested cost sharing
+
+#### Google Maps Routes API Setup
+
+**Step 1 — Obtain an API Key**
+
+1. Visit the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create or select a Google Cloud project.
+3. Enable billing as required by Google Maps Platform.
+4. Navigate to **APIs & Services → Library**.
+5. Search for and enable **Routes API**.
+6. Navigate to **APIs & Services → Credentials**.
+7. Select **Create Credentials → API Key**.
+8. Copy the generated key and configure appropriate API restrictions.
+
+Google Maps Platform usage may incur charges depending on API usage and available credits.
+
+**Step 2 — Configure the Environment**
+
+In the project root, copy `.env.example` to `.env` if you haven't already.
+
+Add:
+
+```dotenv
+GOOGLE_MAPS_API_KEY=YOUR_ACTUAL_API_KEY
 ```
 
-`n` is confirmed passengers, including party members and excluding the driver, pending requests and waitlisted parties. Posts show the range from one passenger through full capacity. Acceptance and manual claims show current prices again and reject stale passenger counts. Confirmed prices update as people join, cancel or promote. Amounts use unrounded route inputs and round to cents at the end; separately rounded earnings and per-person figures may differ by a few cents when multiplied. No service fee or automatic-price cap applies.
+In `compose.yaml`, keep the following environment configuration unchanged:
 
-Google traffic-aware estimates use each date's scheduled America/Los_Angeles departure. Round trips sum both directions at their own departure times. Recurring dates are quoted individually; an allowed single-date departure change queues a new quote only for that date. A short cache reuses identical requests for 60 seconds. Saved quotes are not continuously refreshed. All current price fields use these quotes and confirmed passenger counts. Past agreements remain historical records. See [Google's traffic-aware routing documentation](https://developers.google.com/maps/documentation/routes/config_trade_offs).
+```yaml
+GOOGLE_MAPS_API_KEY: "${GOOGLE_MAPS_API_KEY:-}"
+```
 
-## Places, identity and ride management
+This passes the API key from your local environment into the application container.
 
-Search a named place/address and explicitly select a result. Choose Exact place or a 0.1–10 mile Nearby area independently at either end. Normal post/search locations start empty. Pickup areas and drop-off areas must both overlap when both filters are selected. Geographic ranges are straight-line flexibility, separate from road distance and traffic. Cards show names/ranges, not editable coordinates. Online Photon geocoding, Leaflet/OpenStreetMap tiles and OSRM preview geometry need internet. Map previews remain explicitly labelled OSRM and are separate from Google's pricing metrics.
+**Step 3 — Rebuild Docker**
 
-Use role, date, departure hour and recurring/one-time tabs to browse. My rides separates driving, confirmed passenger and still-pending posts, with date and time filters. Departure until, advanced schedule filters and user-entered arrival deadlines remain removed. Times use whole hours in America/Los_Angeles.
-
-Unconfirmed students appear as stable aliases. Confirmed partners see real names and driver information for that date. Approved waitlisted parties may auto-confirm when enough seats open, or explicitly claim if they opted out of automation. Parties are never split. An owner can edit departure/notes for one unrequested date or cancel a date/week; later weeks remain unchanged. Drivers and confirmed passengers can rate each other after the completion window, one editable 1–5 star vote per partner/date. Chat is limited to confirmed participants and the owner.
-
-## Native Python and RAG
-
-Export your server environment explicitly; native Python does not automatically load `.env`:
+After updating the environment variables, run:
 
 ```bash
-python3 -m app.server
+HEKY_PORT=8010 docker compose up -d --build app
 ```
 
-For an existing native installation, stop the old process and use the existing database:
+**Step 4 — Verify**
+
+Navigate to:
+
+**http://127.0.0.1:8010**
+
+Refresh the application and test route estimation by entering pickup and destination locations when creating a ride.
+
+If the integration does not work, verify the API key, billing configuration, enabled APIs, and container logs.
+
+### OpenStreetMap
+
+[OpenStreetMap](https://www.openstreetmap.org/) provides open geographic data used for CampusLoop's interactive maps.
+
+The mapping interface supports:
+
+- Viewing geographic locations
+- Selecting pickup and drop-off points
+- Exploring streets and surrounding areas
+- Visualizing trip locations and routes
+
+OpenStreetMap provides geographic data; map rendering and routing may rely on additional libraries or services.
+
+### Ollama — AI Chatbot
+
+[Ollama](https://ollama.com/) enables CampusLoop to run a large language model locally.
+
+The AI chatbot provides conversational assistance to help users understand the platform and its functionality.
+
+**Benefits of local AI inference:**
+
+- No external hosted LLM API key required
+- Greater control over the model environment
+- Local processing of chatbot requests
+- Integration with the existing Docker infrastructure
+
+#### Ollama Setup
+
+Ollama is configured as a service in Docker Compose.
+
+Start the services:
 
 ```bash
-DATABASE_PATH=/absolute/path/to/existing/data/heky.sqlite3 python3 -m app.server
+HEKY_PORT=8010 docker compose up -d --build
 ```
 
-Keep `COOKIE_SECURE=0` for local HTTP and use one hostname consistently. Real verification email needs `DEMO_MODE=0`, SMTP and allowed student domains; email verification does not verify enrollment or driving eligibility. Do not delete a database to fix login.
-
-Ask CampusLoop retrieves permission-filtered rides and English guidance using BM25 and optional Ollama embeddings. It cites sources and warns when the model is unavailable. It cannot book rides or access private chats/passwords/session secrets. User-authored text is preserved. Unpriced routes are described as unavailable, not free.
-
-## Verification
+Check the Ollama container:
 
 ```bash
-python3 -m unittest discover -s tests -v
-node --check static/app.js
-node --check static/landing.js
+HEKY_PORT=8010 docker compose ps
 ```
 
-Node 18+ enables production-handler/API integration checks. See `TEST_RESULTS.md` for executed flows and external-service limits.
+View Ollama logs:
+
+```bash
+HEKY_PORT=8010 docker compose logs -f ollama
+```
+
+The chatbot requires a compatible Ollama model to be installed and available.
+
+To check which models are installed:
+
+```bash
+HEKY_PORT=8010 docker compose exec ollama ollama list
+```
+
+If the configured model is missing, pull it into the container using:
+
+```bash
+HEKY_PORT=8010 docker compose exec ollama ollama pull <MODEL_NAME>
+```
+
+Replace `<MODEL_NAME>` with the model configured for your application's chatbot.
+
+---
+
+## Pricing Algorithm
+
+CampusLoop's proposed pricing model is designed around transparent cost sharing rather than traditional ride-hailing or surge pricing.
+
+The model considers:
+
+1. Route distance
+2. Estimated travel duration
+3. Number of participating riders
+
+### 1. Base Price
+
+The base price is calculated using distance and travel duration:
+
+**Base Price = Distance × Rate per Mile + Time × Rate per Minute**
+
+| Parameter | Value |
+|---|---|
+| Rate per mile | $0.60/mile |
+| Rate per minute | $0.30/minute |
+| Service fee | None (initially) |
+
+Distance and duration can be obtained through the Google Maps Routes API.
+
+### 2. Driver Earnings
+
+Driver earnings increase as more riders join the trip.
+
+**Driver Earnings = Base Price × [1 + 0.65 × (n − 1)]**
+
+Where `n` is the number of confirmed riders.
+
+| Riders | Driver Earnings Multiplier |
+|---|---|
+| 1 | 1.00× |
+| 2 | 1.65× |
+| 3 | 2.30× |
+| 4 | 2.95× |
+
+### 3. Rider Contribution
+
+The driver's total earnings are divided equally among confirmed riders.
+
+**Price per Rider = Driver Earnings ÷ n**
+
+As the number of riders increases:
+
+- Total driver earnings increase.
+- Individual rider contributions decrease.
+- The trip becomes more cost-efficient for participants.
+
+### 4. Price Estimates
+
+The intended pricing interface provides estimated ranges before a ride is confirmed.
+
+**For Drivers**
+
+Estimated earnings range from one confirmed rider to all available seats being filled.
+
+**For Riders**
+
+Estimated individual contributions range from traveling alone to sharing the ride with the maximum number of riders.
+
+After a ride match is accepted, the price is recalculated based on the number of confirmed riders.
+
+**Implementation status:** This section describes the proposed rider-count-based algorithm. The backend's older distance-only pricing implementation may still need to be migrated to this model.
+
+---
+
+## Development
+
+### Docker Commands
+
+| Action | Command |
+|---|---|
+| Build and start all services | `HEKY_PORT=8010 docker compose up --build -d` |
+| Start existing containers | `HEKY_PORT=8010 docker compose up -d` |
+| Rebuild application only | `HEKY_PORT=8010 docker compose up -d --build app` |
+| Check container status | `HEKY_PORT=8010 docker compose ps` |
+| View application logs | `HEKY_PORT=8010 docker compose logs -f app` |
+| View Ollama logs | `HEKY_PORT=8010 docker compose logs -f ollama` |
+| Restart application | `HEKY_PORT=8010 docker compose restart app` |
+| Stop services | `HEKY_PORT=8010 docker compose down` |
+
+### Troubleshooting
+
+**Website is not accessible**
+
+Check whether the containers are running:
+
+```bash
+HEKY_PORT=8010 docker compose ps
+```
+
+Inspect application logs:
+
+```bash
+HEKY_PORT=8010 docker compose logs --tail=100 app
+```
+
+**Changes are not appearing**
+
+Rebuild the application:
+
+```bash
+HEKY_PORT=8010 docker compose up -d --build app
+```
+
+Then hard-refresh the browser:
+
+- macOS: `Cmd + Shift + R`
+- Windows: `Ctrl + Shift + R`
+
+**Port 8010 is already in use**
+
+Check the process using the port:
+
+```bash
+lsof -i :8010
+```
+
+Stop the conflicting service or configure a different host port.
+
+**Google Maps Routes API is not working**
+
+Check that:
+
+- The API key is present in `.env`.
+- Routes API is enabled in Google Cloud.
+- Billing is configured correctly.
+- API key restrictions allow the required requests.
+- The Docker application container was rebuilt after changing `.env`.
+
+**AI chatbot is not responding**
+
+Verify that the Ollama container is running:
+
+```bash
+HEKY_PORT=8010 docker compose ps
+```
+
+Check the installed models:
+
+```bash
+HEKY_PORT=8010 docker compose exec ollama ollama list
+```
+
+Review Ollama logs for errors:
+
+```bash
+HEKY_PORT=8010 docker compose logs --tail=100 ollama
+```
+
+Make sure the configured model is available and the host has sufficient memory to run it.
+
+---
+
+## Roadmap
+
+CampusLoop's initial focus is on USC students, with plans to expand functionality and support a broader university community.
+
+### University Expansion
+Expand from USC to additional universities, starting with Southern California and eventually supporting students nationwide.
+
+### Multi-Stop Ride Matching
+Allow drivers to pick up multiple passengers along their planned routes, improving convenience and increasing seat utilization.
+
+### Event-Based Ride Discovery
+Enable users to name rides and associate them with searchable events, such as concerts, sporting events, and campus activities.
+
+### Trust & Safety
+Enhance the student community with stronger identity verification, safety features, and rider and driver feedback.
+
+### Improved Matching
+Develop more advanced route-overlap detection, departure-time flexibility, and personalized ride recommendations.
+
+### Transit Integration
+Explore connections with campus shuttle systems and public transportation to create more flexible mobility options.
+
+---
+
+## Project Vision
+
+CampusLoop aims to make student transportation more accessible by connecting people whose travel plans already overlap.
+
+By encouraging shared journeys, the platform seeks to reduce individual transportation costs, make better use of available vehicle capacity, and strengthen connections within university communities.
+
+**One campus today. A connected student network tomorrow.**
