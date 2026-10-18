@@ -129,6 +129,36 @@ class AppTests(unittest.TestCase):
         for aid in [first,second]:self.clients['mina'].call(f'/api/applications/{aid}/accept',{})
         self.assertEqual(self.clients['mina'].call(f"/api/occurrences/{ride['id']}/cancel",{})[0],200)
         self.assertEqual(self.status('jamie',first),'canceled');self.assertEqual(self.status('leo',second),'canceled')
+        code,notes=self.clients['jamie'].call('/api/notifications');self.assertEqual(code,200,notes)
+        self.assertTrue(notes['unread']>=1);self.assertTrue(any(n['kind']=='driver_canceled' for n in notes['notifications']))
+        canceled=next(a for a in self.clients['jamie'].call('/api/applications')[1]['applications'] if a['id']==first)
+        self.assertTrue(canceled['owner_canceled'])
+        self.assertEqual(canceled['owner_name'],'Mina Park')
+        self.assertTrue(canceled['identity_revealed'])
+        self.assertTrue(canceled['was_matched'])
+        self.assertEqual(canceled['cancel_reason'],'owner_matched')
+        # Never-matched pending cancel still lists the owner by name on this card only.
+        pending_ride=self.create(note='Pending cancel identity')
+        pending=self.apply('ethan',pending_ride)
+        self.assertEqual(self.clients['mina'].call(f"/api/occurrences/{pending_ride['id']}/cancel",{})[0],200)
+        pending_view=next(a for a in self.clients['ethan'].call('/api/applications')[1]['applications'] if a['id']==pending)
+        self.assertTrue(pending_view['owner_canceled'])
+        self.assertEqual(pending_view['owner_name'],'Mina Park')
+        self.assertEqual(pending_view['cancel_reason'],'owner')
+        self.assertFalse(pending_view['was_matched'])
+        # Republish removes the canceled Sent row and posts an open rider request.
+        code,published=self.clients['jamie'].call(f'/api/applications/{first}/republish',{})
+        self.assertEqual(code,200,published)
+        sent=[a for a in self.clients['jamie'].call('/api/applications')[1]['applications'] if a['id']==first]
+        self.assertEqual(sent,[])
+        code,mine=self.clients['jamie'].call('/api/my-rides/search',{'date':published['trip_date']})
+        self.assertEqual(code,200,mine)
+        pending_mine=next(r for r in mine['rides'] if r['id']==published['occurrence_id'])
+        self.assertEqual(pending_mine['my_role'],'pending')
+        self.assertEqual(pending_mine['role'],'rider')
+        board=next(r for r in self.search('ethan',date=published['trip_date']) if r['id']==published['occurrence_id'])
+        self.assertEqual(board['role'],'rider')
+        self.assertFalse(board['identity_revealed'])
 
     def test_concurrent_manual_claims_have_one_winner(self):
         ride=self.create();first=self.apply('jamie',ride);one=self.apply('leo',ride,auto=False);two=self.apply('ethan',ride,auto=False)
@@ -141,7 +171,7 @@ class AppTests(unittest.TestCase):
     def test_rag_endpoint_uses_real_http_model_contract(self):
         server=ThreadingHTTPServer(('127.0.0.1',0),ModelFixture);thread=threading.Thread(target=server.serve_forever,kwargs={'poll_interval':.01},daemon=True);thread.start()
         try:
-            self.app.rag=RAG(self.store,Ollama(f'http://127.0.0.1:{server.server_port}'))
+            self.app.rag=RAG(self.store,Ollama(f'http://127.0.0.1:{server.server_port}'),warm=False)
             code,result=self.clients['jamie'].call('/api/rag/ask',{'question':'How do cancellation and waitlist work?','filters':{'date':self.date}})
             self.assertEqual(code,200,result);self.assertEqual(result['mode'],'rag');self.assertTrue(result['sources'])
             self.assertNotIn('password_hash',json.dumps(result));self.assertNotIn('heky-local-2026',json.dumps(result))
@@ -342,6 +372,9 @@ class PlaceTests(unittest.TestCase):
 class ModelFixture(BaseHTTPRequestHandler):
     calls=[]
     def log_message(self,*args):pass
+    def do_GET(self):
+        result={'models':[{'name':'qwen2.5:0.5b'},{'name':'qwen2.5:1.5b'},{'name':'nomic-embed-text:v1.5'}]}
+        payload=json.dumps(result).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
     def do_POST(self):
         data=json.loads(self.rfile.read(int(self.headers['Content-Length'])));type(self).calls.append((self.path,data))
         if self.path=='/api/embed':result={'embeddings':[[float(t.lower().count('cancel')),float(t.lower().count('waitlist')),1.0] for t in data['input']]}
@@ -354,18 +387,19 @@ class RAGTests(unittest.TestCase):
             store=Store(Path(path)/'db.sqlite');App(store,demo_mode=True)
             server=ThreadingHTTPServer(('127.0.0.1',0),ModelFixture);thread=threading.Thread(target=server.serve_forever,kwargs={'poll_interval':.01},daemon=True);thread.start();ModelFixture.calls=[]
             try:
-                rag=RAG(store,Ollama(f'http://127.0.0.1:{server.server_port}'))
+                rag=RAG(store,Ollama(f'http://127.0.0.1:{server.server_port}'),warm=False)
                 with store.read() as db:user=dict(db.execute('SELECT * FROM users WHERE id=1').fetchone());date=db.execute('SELECT min(trip_date) FROM occurrences').fetchone()[0]
-                answer=rag.ask(user,'cancellation cancel waitlist promotion',{'date':date});self.assertEqual(answer['mode'],'rag');self.assertEqual(answer['retrieval'],'hybrid_bm25_vector');self.assertIn('[S1]',answer['answer']);self.assertNotIn('[S999]',answer['answer'])
-                embeds=sum(p=='/api/embed' for p,_ in ModelFixture.calls);rag.ask(user,'cancellation cancel waitlist promotion',{'date':date});self.assertEqual(embeds,sum(p=='/api/embed' for p,_ in ModelFixture.calls))
-                request=next(data for p,data in ModelFixture.calls if p=='/api/generate');self.assertIn('<retrieved_sources>',request['prompt']);self.assertIn('no action tools',request['system'])
+                answer=rag.ask(user,'cancellation cancel waitlist promotion',{'date':date},semantic=True);self.assertEqual(answer['mode'],'rag');self.assertEqual(answer['retrieval'],'hybrid_bm25_vector');self.assertIn('[S1]',answer['answer']);self.assertNotIn('[S999]',answer['answer'])
+                embeds=sum(p=='/api/embed' for p,_ in ModelFixture.calls);rag.ask(user,'cancellation cancel waitlist promotion',{'date':date},semantic=True);self.assertEqual(embeds,sum(p=='/api/embed' for p,_ in ModelFixture.calls))
+                request=next(data for p,data in ModelFixture.calls if p=='/api/generate');self.assertIn('<retrieved_sources>',request['prompt']);self.assertIn('Cite with',request['system'])
                 with store.read() as db:self.assertGreater(db.execute('SELECT count(*) FROM embeddings').fetchone()[0],0)
+                fast=rag.ask(user,'cancellation cancel waitlist promotion',{'date':date},semantic=False);self.assertEqual(fast['retrieval'],'bm25')
             finally:server.shutdown();server.server_close();thread.join(2)
     def test_model_unavailable_has_no_fake_answer(self):
         with tempfile.TemporaryDirectory() as path:
             store=Store(Path(path)/'db.sqlite');App(store,demo_mode=True)
             with store.read() as db:user=dict(db.execute('SELECT * FROM users WHERE id=1').fetchone());date=db.execute('SELECT min(trip_date) FROM occurrences').fetchone()[0]
-            answer=RAG(store,Ollama('http://127.0.0.1:1')).ask(user,'How does cancellation and waitlist work?',{'date':date})
+            answer=RAG(store,Ollama('http://127.0.0.1:1'),warm=False).ask(user,'How does cancellation and waitlist work?',{'date':date})
             self.assertEqual(answer['mode'],'retrieval_only');self.assertIsNone(answer['answer']);self.assertTrue(answer['sources'])
 
 if __name__=='__main__':unittest.main()

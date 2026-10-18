@@ -6,7 +6,7 @@ import math
 from .domain import (ZONE, PLACES, Problem, require, integer, date_value, location,
     distance_miles, today, now, joined_occurrence, ensure_open, list_trips,
     identity_name, private_text, occupied, event, trip_create, request_ride,
-    decide, cancel_application)
+    decide, cancel_application, cancel_occurrence)
 
 
 def rating_summary(db, subject, role):
@@ -76,9 +76,15 @@ def my_rides(db,user,criteria=None):
     rides=[]
     for r in list_trips(db,user['id'],filters):
         o=joined_occurrence(db,r['id']);driver,riders,confirmed=participants(db,o)
-        if user['id']==driver: r['my_role']='driver'
-        elif user['id'] in riders: r['my_role']='rider'
-        else: continue
+        # Open rider posts (looking for a driver) belong in Still pending, not Confirmed passenger.
+        if user['id']==driver:
+            r['my_role']='driver'
+        elif user['id'] in riders:
+            r['my_role']='rider'
+        elif r['is_owner'] and r['role']=='rider' and not driver:
+            r['my_role']='pending'
+        else:
+            continue
         if scope=='upcoming' and r['departed']: continue
         if scope=='past' and not r['departed']: continue
         r['completed']=completed(o)
@@ -103,7 +109,11 @@ def my_rides(db,user,criteria=None):
         r['meeting_destination']=json.loads(booking['meeting_destination']) if booking else None
         r['party_size']=own['party_size'] if own else r['capacity'] if r['role']=='rider' else None
         r['total_price_cents']=r['agreed_price_cents']*(r['party_size'] or 1)
-        r['rating_targets']=rating_targets(db,user['id'],o)
+        r['rating_targets']=rating_targets(db,user['id'],o) if r['my_role']!='pending' else []
+        r['pending_offers']=db.execute(
+            "SELECT count(*) FROM applications WHERE occurrence_id=? AND status='pending'",
+            (r['id'],),
+        ).fetchone()[0] if r['my_role']=='pending' else 0
         r['can_edit_date']=r['is_owner'] and r['kind']=='regular' and not r['departed'] and not db.execute("SELECT 1 FROM applications WHERE occurrence_id=? AND status IN ('pending','waitlisted','confirmed')",(r['id'],)).fetchone()
         rides.append(r)
     return rides
@@ -112,9 +122,7 @@ def my_rides(db,user,criteria=None):
 def cancel_date(db,user,oid):
     o=joined_occurrence(db,oid);ensure_open(o)
     if o['owner_id']==user['id']:
-        db.execute("UPDATE occurrences SET status='canceled',driver_id=NULL WHERE id=?",(oid,))
-        db.execute("UPDATE applications SET status='canceled' WHERE occurrence_id=? AND status IN ('pending','waitlisted','confirmed')",(oid,))
-        event(db,oid,user['id'],'The owner skipped this ride date. Other dates stay unchanged.')
+        cancel_occurrence(db,user,oid)
     else:
         a=db.execute("SELECT id FROM applications WHERE occurrence_id=? AND requester_id=? AND status IN ('pending','waitlisted','confirmed')",(oid,user['id'])).fetchone()
         require(a is not None,'You do not have an active booking on this date.',403)
@@ -157,6 +165,8 @@ def demo_views(db,user):
         for a in db.execute('SELECT * FROM applications WHERE occurrence_id=? ORDER BY created_at,id',(o['id'],)):
             name,revealed=identity_name(db,user['id'],a['requester_id'],o['id'])
             r['members'].append(dict(id=a['id'],name='You' if a['requester_id']==user['id'] else name,status=a['status'],party_size=a['party_size'],auto_confirm=bool(a['auto_confirm']),is_you=a['requester_id']==user['id'],can_release=a['id'] in json.loads(r['releasable_ids']) and a['status']=='confirmed'))
+        r['rating_targets']=rating_targets(db,user['id'],o)
+        r['completed']=completed(o)
         r.pop('releasable_ids');output.append(r)
     return output
 
@@ -192,13 +202,11 @@ def create_demo(db,user):
     scenario(oid,'4. Approval required','Your request is pending, not approved. Release the example seat: the approved waitlisted passenger is promoted; your pending request stays pending.',[release])
     oid=ride(driver);apply(user,oid)
     db.execute('UPDATE occurrences SET trip_date=? WHERE id=?',(str(today()-dt.timedelta(days=2)),oid))
-    rate_person(db,driver,oid,dict(subject_id=user['id'],stars=5))
-    scenario(oid,'5. Completed passenger ride','Open My rides → Confirmed passenger → Past, then rate your driver. Only confirmed completed rides can be rated.')
+    scenario(oid,'5. End-of-ride rating · passenger','Use Rate this ride below (or My rides → Past). Rate your driver after the trip ends. Editing a rating does not add another vote.')
     if user['vehicle'].strip():
-        oid=ride(user);apply(a,oid,owner=user)
+        oid=ride(user);apply(a,oid,owner=user);apply(b,oid,owner=user)
         db.execute('UPDATE occurrences SET trip_date=? WHERE id=?',(str(today()-dt.timedelta(days=1)),oid))
-        rate_person(db,a,oid,dict(subject_id=user['id'],stars=4))
-        scenario(oid,'6. Completed driver ride','Open My rides → You’re driving → Past, then rate the confirmed passenger. Editing a rating does not add another vote.')
+        scenario(oid,'6. End-of-ride rating · driver','Use Rate this ride below. Drivers rate each confirmed passenger separately after the trip ends.')
     return demo_views(db,user)
 
 

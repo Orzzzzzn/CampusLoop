@@ -15,8 +15,14 @@ services:
       GOOGLE_MAPS_API_KEY: "${GOOGLE_MAPS_API_KEY:-}"
       COOKIE_SECURE: "${COOKIE_SECURE:-0}"
       OLLAMA_URL: "http://ollama:11434"
-      CHAT_MODEL: "${CHAT_MODEL:-qwen2.5:1.5b}"
+      # 0.5b keeps CPU answers usable; set CHAT_MODEL=qwen2.5:1.5b for higher quality.
+      CHAT_MODEL: "${CHAT_MODEL:-qwen2.5:0.5b}"
       EMBED_MODEL: "${EMBED_MODEL:-nomic-embed-text:v1.5}"
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:--1}"
+      RAG_SEMANTIC: "${RAG_SEMANTIC:-0}"
+      RAG_WARMUP: "${RAG_WARMUP:-1}"
+      RAG_NUM_PREDICT: "${RAG_NUM_PREDICT:-140}"
+      RAG_NUM_CTX: "${RAG_NUM_CTX:-1024}"
       SMTP_HOST: "${SMTP_HOST:-}"
       SMTP_PORT: "${SMTP_PORT:-587}"
       SMTP_FROM: "${SMTP_FROM:-campusloop@localhost}"
@@ -29,6 +35,8 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -41,6 +49,8 @@ services:
       - ollama_models:/root/.ollama
     environment:
       OLLAMA_HOST: "0.0.0.0:11434"
+      # Keep chat/embed weights loaded so the first browser ask is not a cold start.
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:--1}"
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 5s
@@ -52,10 +62,20 @@ services:
     image: ollama/ollama:latest
     environment:
       OLLAMA_HOST: "http://ollama:11434"
-      CHAT_MODEL: "${CHAT_MODEL:-qwen2.5:1.5b}"
+      CHAT_MODEL: "${CHAT_MODEL:-qwen2.5:0.5b}"
       EMBED_MODEL: "${EMBED_MODEL:-nomic-embed-text:v1.5}"
+      RAG_NUM_CTX: "${RAG_NUM_CTX:-1024}"
     entrypoint: ["/bin/sh", "-c"]
-    command: ['ollama pull "$$CHAT_MODEL" && ollama pull "$$EMBED_MODEL"']
+    command:
+      - |
+        set -e
+        echo "Pulling chat model $$CHAT_MODEL…"
+        ollama pull "$$CHAT_MODEL"
+        echo "Pulling embed model $$EMBED_MODEL…"
+        ollama pull "$$EMBED_MODEL"
+        echo "Warming chat model (same context size as the app)…"
+        ollama run "$$CHAT_MODEL" "ping" --keepalive 24h </dev/null >/dev/null 2>&1 || true
+        echo "Models ready."
     depends_on:
       ollama:
         condition: service_healthy

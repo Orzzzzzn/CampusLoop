@@ -177,8 +177,16 @@ CREATE TABLE IF NOT EXISTS demo_scenarios (
  id INTEGER PRIMARY KEY, creator_id INTEGER NOT NULL REFERENCES users(id), occurrence_id INTEGER NOT NULL REFERENCES occurrences(id),
  title TEXT NOT NULL, description TEXT NOT NULL, releasable_ids TEXT NOT NULL, created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS notifications (
+ id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+ kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
+ occurrence_id INTEGER REFERENCES occurrences(id),
+ application_id INTEGER REFERENCES applications(id),
+ read INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS application_queue ON applications(occurrence_id,status,created_at,id);
 CREATE INDEX IF NOT EXISTS occurrence_dates ON occurrences(trip_date,status);
+CREATE INDEX IF NOT EXISTS notification_inbox ON notifications(user_id,read,created_at DESC);
 '''
 
 
@@ -193,7 +201,7 @@ class Store:
                 'users': [('is_demo_fixture','INTEGER NOT NULL DEFAULT 0')],
                 'trips': [('price_meta',"TEXT NOT NULL DEFAULT '{}'")],
                 'occurrences': [('overrides',"TEXT NOT NULL DEFAULT '{}'")],
-                'applications': [('agreed_price_cents','INTEGER')],
+                'applications': [('agreed_price_cents','INTEGER'), ('cancel_reason','TEXT'), ('matched','INTEGER NOT NULL DEFAULT 0')],
             }.items():
                 columns={r['name'] for r in db.execute('PRAGMA table_info('+table+')')}
                 for name, declaration in additions:
@@ -201,6 +209,25 @@ class Store:
                         db.execute('ALTER TABLE '+table+' ADD COLUMN '+name+' '+declaration)
             db.execute('''UPDATE applications SET agreed_price_cents=(SELECT t.price_cents FROM occurrences o JOIN trips t ON t.id=o.trip_id WHERE o.id=applications.occurrence_id) WHERE agreed_price_cents IS NULL''')
             db.execute("INSERT OR IGNORE INTO app_settings(key,value) VALUES('identity_salt',?)",(secrets.token_hex(32),))
+            db.execute("UPDATE applications SET matched=1 WHERE status='confirmed'")
+            # Upgrade legacy cancel reasons so previously matched pairs keep names on request cards.
+            for row in db.execute(
+                "SELECT id,cancel_reason,matched FROM applications WHERE status='canceled' AND cancel_reason IN ('owner','requester')"
+            ).fetchall():
+                confirmed=row['matched'] or db.execute(
+                    "SELECT 1 FROM events WHERE occurrence_id=(SELECT occurrence_id FROM applications WHERE id=?) AND message=?",
+                    (row['id'], f"Request #{row['id']} confirmed."),
+                ).fetchone()
+                if not confirmed:
+                    # Seeded confirmed bookings had no decide() event; chat proves a prior match.
+                    confirmed=db.execute(
+                        "SELECT 1 FROM messages WHERE occurrence_id=(SELECT occurrence_id FROM applications WHERE id=?)",
+                        (row['id'],),
+                    ).fetchone()
+                if not confirmed:
+                    continue
+                upgraded='owner_matched' if row['cancel_reason']=='owner' else 'requester_matched'
+                db.execute('UPDATE applications SET cancel_reason=?,matched=1 WHERE id=?',(upgraded,row['id']))
         # Remove the old display suffix from stored locations without changing
         # coordinates, bookings, names, passwords, or other account data.
         with self.tx() as db:
@@ -248,6 +275,31 @@ def event(db, oid, actor, message):
     db.execute('INSERT INTO events(occurrence_id,actor_id,message,created_at) VALUES(?,?,?,?)', (oid, actor, message, now().timestamp()))
 
 
+def notify(db, user_id, kind, title, body, occurrence_id=None, application_id=None):
+    db.execute(
+        'INSERT INTO notifications(user_id,kind,title,body,occurrence_id,application_id,created_at) VALUES(?,?,?,?,?,?,?)',
+        (user_id, kind, title, body, occurrence_id, application_id, now().timestamp()),
+    )
+
+
+def list_notifications(db, user, limit=40):
+    rows = db.execute(
+        '''SELECT id,kind,title,body,occurrence_id,application_id,read,created_at
+           FROM notifications WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT ?''',
+        (user['id'], limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_notifications_read(db, user, ids=None):
+    if ids is None:
+        db.execute('UPDATE notifications SET read=1 WHERE user_id=? AND read=0', (user['id'],))
+        return
+    require(isinstance(ids, list) and all(type(n) is int and n > 0 for n in ids), 'Notification ids must be positive integers.')
+    for nid in ids[:100]:
+        db.execute('UPDATE notifications SET read=1 WHERE id=? AND user_id=?', (nid, user['id']))
+
+
 def joined_occurrence(db, oid):
     row = db.execute('''SELECT o.*,t.owner_id,t.role,t.departure_hour,t.return_hour,
         t.origin,t.destination,t.seats,t.note,t.price_cents,t.price_meta,t.kind,t.arrive_by FROM occurrences o
@@ -285,7 +337,7 @@ def promote(db, o):
     promoted = []
     for a in db.execute("SELECT a.*,u.name FROM applications a JOIN users u ON u.id=a.requester_id WHERE occurrence_id=? AND status='waitlisted' AND auto_confirm=1 ORDER BY created_at,id", (o['id'],)).fetchall():
         if a['party_size'] <= free:
-            db.execute("UPDATE applications SET status='confirmed' WHERE id=? AND status='waitlisted'", (a['id'],))
+            db.execute("UPDATE applications SET status='confirmed',matched=1 WHERE id=? AND status='waitlisted'", (a['id'],))
             free -= a['party_size']
             promoted.append(a['id'])
             event(db, o['id'], a['requester_id'], a['name']+' automatically confirmed from the approved waitlist.')
@@ -506,7 +558,10 @@ def decide(db,user,aid,accept):
         db.execute("UPDATE applications SET status='declined' WHERE occurrence_id=? AND id<>? AND status='pending'",(o['id'],aid))
     else:
         status='confirmed' if occupied(db,o['id'])+a['party_size']<=o['capacity'] else 'waitlisted'
-    db.execute('UPDATE applications SET status=? WHERE id=?',(status,aid))
+    if status=='confirmed':
+        db.execute("UPDATE applications SET status='confirmed',matched=1 WHERE id=?",(aid,))
+    else:
+        db.execute('UPDATE applications SET status=? WHERE id=?',(status,aid))
     event(db,o['id'],user['id'],'Request #'+str(aid)+' '+status+'.')
     return status
 
@@ -518,11 +573,139 @@ def cancel_application(db,user,aid):
     require(a['requester_id']==user['id'],'Only the requesting student may cancel this request.',403)
     ensure_open(o)
     require(a['status'] in ('pending','waitlisted','confirmed'),'This request is already inactive.',409)
-    db.execute("UPDATE applications SET status='canceled' WHERE id=?",(aid,))
-    if o['role']=='rider' and a['status']=='confirmed':
+    prior=a['status']
+    matched=prior=='confirmed' or bool(a['matched'])
+    reason='requester_matched' if matched else 'requester'
+    db.execute("UPDATE applications SET status='canceled',cancel_reason=? WHERE id=?",(reason,aid))
+    if o['role']=='rider' and prior=='confirmed':
         db.execute('UPDATE occurrences SET driver_id=NULL WHERE id=?',(o['id'],))
-    event(db,o['id'],user['id'],user['name']+' canceled this date only.')
-    return promote(db,o)
+        # Reopen other driver offers so the rider request appears active again.
+        declined=db.execute(
+            "SELECT count(*) FROM applications WHERE occurrence_id=? AND status='declined'",
+            (o['id'],),
+        ).fetchone()[0]
+        db.execute(
+            "UPDATE applications SET status='pending',cancel_reason=NULL WHERE occurrence_id=? AND status='declined'",
+            (o['id'],),
+        )
+        notify(
+            db, o['owner_id'], 'driver_canceled',
+            'Your driver canceled',
+            f"{user['name']} canceled for {o['trip_date']}. Your rider request is open again"
+            + (' and other offers were restored.' if declined else '.'),
+            occurrence_id=o['id'], application_id=aid,
+        )
+        event(db, o['id'], user['id'], user['name']+' canceled as driver. The rider request is open again.')
+    else:
+        event(db,o['id'],user['id'],user['name']+' canceled this date only.')
+        if prior=='confirmed' and o['role']=='driver':
+            notify(
+                db, o['owner_id'], 'seat_freed',
+                'A passenger canceled',
+                f"{user['name']} canceled their seat for {o['trip_date']}. A seat is open again.",
+                occurrence_id=o['id'], application_id=aid,
+            )
+    promoted=promote(db,o)
+    if o['role']=='driver' and prior=='confirmed':
+        notify_waitlist_openings(db,o,promoted)
+    return promoted
+
+
+def notify_waitlist_openings(db, o, promoted_ids):
+    """Tell waitlisted riders when a seat opens; auto-promoted parties get a confirmation notice."""
+    for aid in promoted_ids:
+        row=db.execute('SELECT requester_id FROM applications WHERE id=?',(aid,)).fetchone()
+        if row:
+            notify(
+                db, row['requester_id'], 'waitlist_promoted',
+                'Seat confirmed from waitlist',
+                f"A seat opened on {o['trip_date']}. Your approved party was automatically confirmed.",
+                occurrence_id=o['id'], application_id=aid,
+            )
+    free=o['capacity']-occupied(db,o['id'])
+    if free<=0:
+        return
+    for a in db.execute(
+        "SELECT a.id,a.requester_id,a.party_size FROM applications a WHERE occurrence_id=? AND status='waitlisted' AND auto_confirm=0 ORDER BY created_at,id",
+        (o['id'],),
+    ).fetchall():
+        if a['party_size']<=free:
+            notify(
+                db, a['requester_id'], 'waitlist_open',
+                'A seat opened — claim it',
+                f"A seat is open for {o['trip_date']}. Confirm soon to secure your spot for your party of {a['party_size']}.",
+                occurrence_id=o['id'], application_id=a['id'],
+            )
+
+
+def cancel_occurrence(db, user, oid):
+    """Owner cancels one ride date; riders keep the request visible and get a bell notification."""
+    o=joined_occurrence(db,oid)
+    require(o['owner_id']==user['id'],'Only the post owner can cancel the entire ride date.',403)
+    ensure_open(o)
+    affected=[dict(r) for r in db.execute(
+        "SELECT id,requester_id,status FROM applications WHERE occurrence_id=? AND status IN ('pending','confirmed','waitlisted')",
+        (oid,),
+    ).fetchall()]
+    db.execute("UPDATE occurrences SET status='canceled',driver_id=NULL WHERE id=?",(oid,))
+    for a in affected:
+        row=db.execute('SELECT matched FROM applications WHERE id=?',(a['id'],)).fetchone()
+        matched=a['status']=='confirmed' or bool(row['matched'] if row else 0)
+        reason='owner_matched' if matched else 'owner'
+        db.execute(
+            "UPDATE applications SET status='canceled',cancel_reason=? WHERE id=?",
+            (reason, a['id']),
+        )
+    event(db,oid,user['id'],'The owner canceled this ride date. No other dates were changed.')
+    trip_label=f"{o['trip_date']} · {o['departure_hour']:02}:00"
+    for a in affected:
+        notify(
+            db, a['requester_id'], 'driver_canceled',
+            'Driver canceled this ride',
+            f"The post owner canceled {trip_label}. Your request is back under Requests → Sent so you can find another ride.",
+            occurrence_id=oid, application_id=a['id'],
+        )
+    return [a['id'] for a in affected]
+
+
+def republish_canceled_request(db, user, aid):
+    """Turn a driver-canceled request into the rider's own open post (Still pending)."""
+    a=db.execute('SELECT * FROM applications WHERE id=?',(aid,)).fetchone()
+    require(a is not None,'Request not found.',404)
+    require(a['requester_id']==user['id'],'Only the requesting student can republish this ride.',403)
+    require(a['status']=='canceled' and (a['cancel_reason'] or '').startswith('owner'),
+            'Only a driver-canceled request can be published again this way.',409)
+    o=joined_occurrence(db,a['occurrence_id'])
+    origin=json.loads(a['meeting_origin'])
+    destination=json.loads(a['meeting_destination'])
+    for point in (origin,destination):
+        point['mode']=point.get('mode') or 'exact'
+        point['radius_miles']=0 if point['mode']=='exact' else float(point.get('radius_miles') or 1)
+    kind=o['kind'] if o['kind'] in ('one','round') else 'one'
+    departure=int(o['departure_hour'])
+    arrive_by=int(o['arrive_by'])
+    if arrive_by<=departure:
+        arrive_by=min(23,departure+1)
+    price=a['agreed_price_cents'] if a['agreed_price_cents'] is not None else o['price_cents']
+    detour=db.execute('SELECT detour_minutes FROM trips WHERE id=?',(o['trip_id'],)).fetchone()
+    note=(o.get('note') or '').strip()
+    if note:
+        note='Looking for a new driver. '+note
+    else:
+        note='Looking for a driver after a previous CampusLoop was canceled.'
+    tid=trip_create(db,user,dict(
+        role='rider',kind=kind,origin=origin,destination=destination,
+        start_date=o['trip_date'],end_date=o['trip_date'],
+        departure_hour=departure,arrive_by=arrive_by,weekdays=[],
+        seats=a['party_size'],price_cents=price,
+        detour_minutes=detour['detour_minutes'] if detour else 10,
+        note=note[:1000],return_hour=o['return_hour'] if kind=='round' else None,
+        _price_meta={'mode':'republished','from_application_id':aid},
+    ))
+    db.execute("UPDATE applications SET cancel_reason='republished' WHERE id=?",(aid,))
+    oid=db.execute('SELECT id FROM occurrences WHERE trip_id=? ORDER BY trip_date LIMIT 1',(tid,)).fetchone()[0]
+    event(db,oid,user['id'],user['name']+' republished this route after a driver cancel.')
+    return dict(trip_id=tid,occurrence_id=oid,trip_date=o['trip_date'],kind=kind)
 
 
 def claim(db,user,aid):
@@ -536,7 +719,7 @@ def claim(db,user,aid):
     if db.execute('SELECT status FROM applications WHERE id=?',(aid,)).fetchone()[0]=='confirmed':
         return
     require(occupied(db,o['id'])+a['party_size']<=o['capacity'],'No seat is open for your party.',409)
-    db.execute("UPDATE applications SET status='confirmed' WHERE id=?",(aid,))
+    db.execute("UPDATE applications SET status='confirmed',matched=1 WHERE id=?",(aid,))
     event(db,o['id'],user['id'],user['name']+' confirmed an open waitlist seat.')
 
 
@@ -552,7 +735,8 @@ def application_views(db,user):
         t.departure_hour,t.origin,t.destination,t.price_cents,owner.name AS owner_name
         FROM applications a JOIN users u ON u.id=a.requester_id JOIN occurrences o ON o.id=a.occurrence_id
         JOIN trips t ON t.id=o.trip_id JOIN users owner ON owner.id=t.owner_id
-        WHERE a.requester_id=? OR t.owner_id=? ORDER BY a.created_at DESC,a.id DESC''',(user['id'],user['id'])).fetchall()
+        WHERE (a.requester_id=? OR t.owner_id=?) AND coalesce(a.cancel_reason,'')!='republished'
+        ORDER BY a.created_at DESC,a.id DESC''',(user['id'],user['id'])).fetchall()
     result=[]
     for row in rows:
         r=dict(row)
@@ -574,8 +758,20 @@ def application_views(db,user):
         r['incoming']=r['owner_id']==user['id']
         r['requester_name'],requester_revealed=identity_name(db,user['id'],r['requester_id'],r['occurrence_id'])
         r['owner_name'],owner_revealed=identity_name(db,user['id'],r['owner_id'],r['occurrence_id'])
+        r['cancel_reason']=r.get('cancel_reason')
+        r['owner_canceled']=r['status']=='canceled' and (r.get('cancel_reason') or '').startswith('owner')
+        # Keep real names on request cards after a match (or any owner-date cancel). Browse stays anonymous.
+        was_matched=bool(r.get('matched')) or (r.get('cancel_reason') in ('owner_matched','requester_matched')) or r['status']=='confirmed'
+        keep_names=was_matched or r['owner_canceled']
+        if keep_names:
+            owner_row=db.execute('SELECT name FROM users WHERE id=?',(r['owner_id'],)).fetchone()
+            requester_row=db.execute('SELECT name FROM users WHERE id=?',(r['requester_id'],)).fetchone()
+            r['owner_name']=owner_row['name'] if owner_row else r['owner_name']
+            r['requester_name']=requester_row['name'] if requester_row else r['requester_name']
+            requester_revealed=owner_revealed=True
         r['identity_revealed']=requester_revealed if r['incoming'] else owner_revealed
         r['closed']=r['occurrence_status']!='active' or dt.datetime.combine(date_value(r['trip_date']),dt.time(r['departure_hour']),ZONE)<=now()
+        r['was_matched']=was_matched
         result.append(r)
     return result
 
@@ -600,20 +796,169 @@ def seed(store):
         ids={}
         for name,email,vehicle in people:
             ids[email]=db.execute('INSERT INTO users(name,email,password_hash,verified,vehicle) VALUES(?,?,?,1,?)',(name,email+'@usc.edu',password,vehicle)).lastrowid
-        start=today()+dt.timedelta(days=(7-today().weekday())%7 or 7)
-        def loc(i,mode='exact',radius=0):
-            return {**{k:v for k,v in PLACES[i].items() if k!='id'},'mode':mode,'radius_miles':radius}
-        base=dict(departure_hour=8,arrive_by=9,kind='regular',weekdays=[0,2,4],start_date=str(start),end_date=str(start+dt.timedelta(days=27)),seats=2,price_cents=400,detour_minutes=10,note='Meet five minutes early. Please confirm the exact meeting points in your request.')
-        created=[]
-        for who,role,ori,dest in [('mina','driver',loc(0,'area',1),loc(4)),('sofia','driver',loc(3,'area',1),loc(4,'area',0.5)),('jamie','driver',loc(2,'area',1),loc(5)),('daniel','rider',loc(0,'area',0.5),loc(4))]:
-            user=db.execute('SELECT * FROM users WHERE id=?',(ids[who],)).fetchone()
-            tid=trip_create(db,user,{**base,'role':role,'origin':ori,'destination':dest,'seats':1 if role=='rider' else 2})
-            created.append(tid)
-        # Every recurring date keeps its own bookings and queue.
-        for occurrence in db.execute('SELECT id FROM occurrences WHERE trip_id=? ORDER BY trip_date',(created[1],)).fetchall():
-            oid=occurrence['id']
-            for who,status in [('jamie','confirmed'),('ethan','confirmed'),('leo','waitlisted')]:
-                db.execute('''INSERT INTO applications(occurrence_id,requester_id,status,party_size,auto_confirm,meeting_origin,meeting_destination,created_at)
-                    VALUES(?,?,?,1,1,?,?,?)''',(oid,ids[who],status,json.dumps(loc(3)),json.dumps(loc(4)),now().timestamp()))
-            db.execute('UPDATE applications SET agreed_price_cents=400 WHERE occurrence_id=?',(oid,))
-            event(db,oid,ids['sofia'],'Sample weekly commute created. Cancel one passenger seat to try real waitlist promotion.')
+
+        def user(who):
+            return dict(db.execute('SELECT * FROM users WHERE id=?',(ids[who],)).fetchone())
+
+        def loc(i, mode='exact', radius=0):
+            return {**{k: v for k, v in PLACES[i].items() if k != 'id'}, 'mode': mode, 'radius_miles': radius}
+
+        def post(who, **data):
+            return trip_create(db, user(who), data)
+
+        def first_occurrence(tid):
+            return db.execute('SELECT id FROM occurrences WHERE trip_id=? ORDER BY trip_date LIMIT 1', (tid,)).fetchone()[0]
+
+        def book(oid, who, status='confirmed', party=1, pickup=None, dropoff=None, auto=True, price=None):
+            o = joined_occurrence(db, oid)
+            pickup = pickup or json.loads(o['origin'])
+            dropoff = dropoff or json.loads(o['destination'])
+            for point in (pickup, dropoff):
+                point['mode'] = 'exact'
+                point['radius_miles'] = 0
+            agreed = price if price is not None else o['price_cents']
+            matched = 1 if status == 'confirmed' else 0
+            aid = db.execute(
+                '''INSERT INTO applications(occurrence_id,requester_id,status,party_size,auto_confirm,meeting_origin,meeting_destination,created_at,agreed_price_cents,matched)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)''',
+                (oid, ids[who], status, party, int(auto), json.dumps(pickup), json.dumps(dropoff), now().timestamp(), agreed, matched),
+            ).lastrowid
+            if status == 'confirmed':
+                event(db, oid, ids[who], f'Request #{aid} confirmed.')
+            if status == 'confirmed' and o['role'] == 'rider':
+                db.execute('UPDATE occurrences SET driver_id=? WHERE id=?', (ids[who], oid))
+
+        def rate(oid, rater, subject, role, stars):
+            db.execute(
+                '''INSERT INTO ratings(occurrence_id,rater_id,subject_id,subject_role,stars,created_at)
+                   VALUES(?,?,?,?,?,?)''',
+                (oid, ids[rater], ids[subject], role, stars, now().timestamp()),
+            )
+
+        def backdate(oid, days_ago):
+            day = today() - dt.timedelta(days=days_ago)
+            db.execute('UPDATE occurrences SET trip_date=? WHERE id=?', (str(day), oid))
+            return day
+
+        start = today() + dt.timedelta(days=(7 - today().weekday()) % 7 or 7)
+        commute = dict(
+            departure_hour=8, arrive_by=9, kind='regular', weekdays=[0, 2, 4],
+            start_date=str(start), end_date=str(start + dt.timedelta(days=27)),
+            seats=2, price_cents=400, detour_minutes=10,
+            note='Meet five minutes early. Please confirm the exact meeting points in your request.',
+        )
+
+        # Recurring board: morning campus loops + one afternoon Tu/Th series.
+        sofia_weekly = post('sofia', role='driver', origin=loc(3, 'area', 1), destination=loc(4, 'area', 0.5), **commute)
+        mina_weekly = post('mina', role='driver', origin=loc(0, 'area', 1), destination=loc(4), **commute)
+        jamie_weekly = post('jamie', role='driver', origin=loc(2, 'area', 1), destination=loc(5), **{**commute, 'weekdays': [1, 3], 'departure_hour': 17, 'arrive_by': 18, 'price_cents': 500, 'note': 'Afternoon Tu/Th Village drop-off. Trunk fits two backpacks.'})
+        post('daniel', role='rider', origin=loc(0, 'area', 0.5), destination=loc(4), **{**commute, 'seats': 1, 'price_cents': 350, 'note': 'Looking for a steady Mon/Wed/Fri driver toward Downey Way.'})
+
+        # Waitlist practice on Sofia’s weekly dates.
+        for occurrence in db.execute('SELECT id FROM occurrences WHERE trip_id=? ORDER BY trip_date', (sofia_weekly,)).fetchall():
+            oid = occurrence['id']
+            book(oid, 'jamie', 'confirmed', pickup=loc(3), dropoff=loc(4))
+            book(oid, 'ethan', 'confirmed', pickup=loc(3), dropoff=loc(4))
+            book(oid, 'leo', 'waitlisted', pickup=loc(3), dropoff=loc(4))
+            event(db, oid, ids['sofia'], 'Sample weekly commute created. Cancel one passenger seat to try real waitlist promotion.')
+
+        # Upcoming one-time and round-trip variety on the board.
+        soon = today() + dt.timedelta(days=2)
+        while soon.weekday() >= 5:
+            soon += dt.timedelta(days=1)
+        later = soon + dt.timedelta(days=3)
+
+        def one_day(day, **extra):
+            payload = dict(kind='one', weekdays=[], start_date=str(day), end_date=str(day), seats=2, detour_minutes=12)
+            payload.update(extra)
+            return payload
+
+        def round_day(day, **extra):
+            payload = dict(kind='round', weekdays=[], start_date=str(day), end_date=str(day), seats=3, detour_minutes=15, return_hour=18)
+            payload.update(extra)
+            return payload
+
+        mina_one = post(
+            'mina', **one_day(
+                soon, role='driver', origin=loc(1, 'area', 1), destination=loc(6),
+                departure_hour=9, arrive_by=10, price_cents=450,
+                note='One-time study-session ride to Leavey.',
+            )
+        )
+        book(first_occurrence(mina_one), 'leo', 'pending', pickup=loc(1), dropoff=loc(6))
+
+        jamie_round = post(
+            'jamie', **round_day(
+                later, role='driver', origin=loc(5), destination=loc(3, 'area', 1),
+                departure_hour=10, arrive_by=11, price_cents=700,
+                note='Round trip to Santa Monica for a museum afternoon. Both legs included.',
+            )
+        )
+        book(first_occurrence(jamie_round), 'daniel', 'confirmed', pickup=loc(5), dropoff=loc(3))
+
+        post(
+            'sofia', **one_day(
+                later, role='driver', origin=loc(4), destination=loc(2, 'area', 1),
+                departure_hour=19, arrive_by=20, price_cents=550, seats=3,
+                note='Evening one-time ride toward Pasadena after a campus event.',
+            )
+        )
+        post(
+            'leo', **one_day(
+                soon + dt.timedelta(days=1), role='rider', origin=loc(6), destination=loc(0, 'area', 0.5),
+                departure_hour=7, arrive_by=8, price_cents=300, seats=1,
+                note='One-time early rider request toward Wilshire / Vermont.',
+            )
+        )
+        post(
+            'ethan', **round_day(
+                later + dt.timedelta(days=1), role='rider', origin=loc(4), destination=loc(3),
+                departure_hour=16, arrive_by=17, price_cents=650, seats=2,
+                note='Round-trip rider request: two of us need both legs covered.',
+            )
+        )
+
+        # Completed rides for rating practice (create upcoming, then backdate).
+        # 1) One-time: Mina drove Jamie + Leo — some ratings already saved, one still open.
+        past_one = post(
+            'mina', **one_day(
+                soon, role='driver', origin=loc(0), destination=loc(4),
+                departure_hour=8, arrive_by=9, price_cents=400,
+                note='Completed one-time commute · rate remaining partners in My rides → Past.',
+            )
+        )
+        past_one_oid = first_occurrence(past_one)
+        book(past_one_oid, 'jamie', 'confirmed')
+        book(past_one_oid, 'leo', 'confirmed')
+        backdate(past_one_oid, 3)
+        # Driver already rated both riders; both passengers still need to rate Mina.
+        rate(past_one_oid, 'mina', 'jamie', 'rider', 4)
+        rate(past_one_oid, 'mina', 'leo', 'rider', 5)
+
+        # 2) Round trip: Sofia drove Ethan — mutual ratings already in place.
+        past_round = post(
+            'sofia', **round_day(
+                soon, role='driver', origin=loc(4), destination=loc(3),
+                departure_hour=11, arrive_by=12, return_hour=17, price_cents=800, seats=2,
+                note='Completed round trip · open Past rides to edit or review ratings.',
+            )
+        )
+        past_round_oid = first_occurrence(past_round)
+        book(past_round_oid, 'ethan', 'confirmed')
+        backdate(past_round_oid, 5)
+        rate(past_round_oid, 'ethan', 'sofia', 'driver', 4)
+        rate(past_round_oid, 'sofia', 'ethan', 'rider', 5)
+
+        # 3) Recurring-style past date: Jamie drove Daniel — rider still needs to rate.
+        past_regular = post(
+            'jamie',
+            role='driver', origin=loc(2, 'area', 1), destination=loc(5),
+            departure_hour=17, arrive_by=18, price_cents=500, seats=2, detour_minutes=10,
+            kind='regular', weekdays=[soon.weekday()], start_date=str(soon), end_date=str(soon),
+            note='Completed recurring afternoon hop · Daniel can still rate Jamie.',
+        )
+        past_regular_oid = first_occurrence(past_regular)
+        book(past_regular_oid, 'daniel', 'confirmed')
+        backdate(past_regular_oid, 4)
+        rate(past_regular_oid, 'jamie', 'daniel', 'rider', 5)
+        event(db, past_one_oid, ids['mina'], 'Seeded completed rides for rating practice. Open My rides → Past.')
