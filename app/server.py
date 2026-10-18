@@ -297,7 +297,7 @@ class App:
                 with self.store.read() as db:
                     can_chat(db,user,oid)
                     events=[{**dict(r),'message':private_text(db,r['message'],user['id'],oid)} for r in db.execute('SELECT message,created_at FROM events WHERE occurrence_id=? ORDER BY id',(oid,))]
-                    members=[dict(r) for r in db.execute("SELECT u.id AS subject_id,u.name,a.status,a.party_size,a.auto_confirm FROM applications a JOIN users u ON u.id=a.requester_id WHERE occurrence_id=? AND status IN ('confirmed','waitlisted') ORDER BY a.created_at,a.id",(oid,))]
+                    members=[dict(r) for r in db.execute("SELECT u.id AS subject_id,u.name,a.status,a.party_size,a.auto_confirm FROM applications a JOIN users u ON u.id=a.requester_id WHERE occurrence_id=? AND status IN ('pending','confirmed','waitlisted') ORDER BY CASE a.status WHEN 'pending' THEN 0 WHEN 'confirmed' THEN 1 ELSE 2 END,a.created_at,a.id",(oid,))]
                     for member in members:
                         member['name'],member['identity_revealed']=identity_name(db,user['id'],member.pop('subject_id'),oid)
                 return {'events':events,'members':members},200,{}
