@@ -23,34 +23,6 @@ Initially developed for the **University of Southern California (USC)** communit
 | Containerization | Docker, Docker Compose |
 | Version Control | Git, GitHub |
 
----
-
-## Project Structure
-
-```text
-CampusLoop/
-├── app/                  # Python backend
-│   ├── server.py
-│   ├── routes.py         # Routing and pricing logic
-│   └── ...
-├── static/               # Frontend assets
-│   ├── index.html
-│   ├── app.js
-│   ├── landing.js
-│   ├── landing.css
-│   ├── style.css
-│   └── ...
-├── tests/                # Automated tests
-├── knowledge/            # Application knowledge resources
-├── compose.yaml          # Docker Compose configuration
-├── Dockerfile
-├── requirements.txt
-├── .env.example          # Environment variable template
-└── README.md
-```
-
----
-
 ## Getting Started
 
 ### Prerequisites
