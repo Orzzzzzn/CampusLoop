@@ -8,39 +8,6 @@ Unlike traditional ride-hailing services, CampusLoop connects students who are a
 
 Initially developed for the **University of Southern California (USC)** community, CampusLoop aims to expand into a connected transportation network across universities.
 
-## Features
-
-### Ride Sharing & Matching
-- **Two-Way Ride Posting:** Both riders and drivers can create trip postings.
-- **One-Time Trips:** Find or offer rides for airport transfers, concerts, weekend outings, and other occasional journeys.
-- **Recurring Trips:** Coordinate regular commutes to campus, classes, or internships.
-- **Route-Based Matching:** Discover compatible trips based on locations, departure schedules, and available seats.
-- **Ride Management:** Send, accept, and manage ride requests and confirmations.
-- **Flexible Roles:** Use one account as both a rider and a driver.
-
-### Smart Pricing
-- Distance- and travel-time-based cost estimation
-- Rider-count-based pricing adjustments
-- Estimated earnings ranges for drivers
-- Estimated cost-sharing ranges for riders
-- Transparent pricing without surge multipliers
-
-### Maps & Navigation
-- Interactive maps powered by OpenStreetMap data
-- Location selection for pickup and drop-off
-- Route distance and travel-time estimation through Google Maps Routes API
-- Route visualization to support trip planning
-
-### AI-Powered Assistance
-- AI chatbot powered by Ollama
-- Natural-language assistance for navigating and understanding CampusLoop
-- Locally hosted language models
-
-### Student Community
-- University email-based account registration
-- Campus-focused ride discovery
-- Shared transportation within student communities
-
 ---
 
 ## Tech Stack
