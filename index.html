@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="CampusLoop connects student riders and drivers. Explore our student carpooling project, transparent cost-sharing model, and university expansion roadmap.">
+  <link rel="icon" href="data:,">
+  <meta name="theme-color" content="#193f33">
+  <meta name="campusloop-pages-version" content="__PAGES_VERSION__">
+  <title>CampusLoop — Share the route. Split the cost.</title>
+  <!-- This entry point is for static hosting. Docker still serves static/index.html. -->
+  <link rel="stylesheet" href="./static/style.css?v=__PAGES_VERSION__">
+  <link rel="stylesheet" href="./static/landing.css?v=__PAGES_VERSION__">
+  <link rel="stylesheet" href="./static/pages.css?v=__PAGES_VERSION__">
+  <script src="./static/pages-config.js?v=__PAGES_VERSION__" defer></script>
+  <script src="./static/landing.js?v=__PAGES_VERSION__" defer></script>
+  <script src="./static/pages.js?v=__PAGES_VERSION__" defer></script>
+</head>
+<body class="pages-showcase">
+  <a class="pages-skip-link" href="#app">Skip to content</a>
+  <header>
+    <button type="button" class="brand" data-nav="home" aria-label="CampusLoop home">↗ CampusLoop<span class="pages-brand-dot">.</span></button>
+    <nav id="navigation" aria-label="Main navigation">
+      <a href="#ways-to-ride">Ways to ride</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#why-campusloop">Why CampusLoop</a>
+      <a href="#faqs">FAQs</a>
+      <a href="#pricing-model">Pricing</a>
+      <a href="#whats-next">What's next</a>
+    </nav>
+    <div class="top-actions row" id="account">
+      <button type="button" data-nav="auth" class="landing-header-login">Log in</button>
+      <button type="button" data-nav="browse" class="landing-header-start">Get started ↗</button>
+    </div>
+  </header>
+  <aside class="pages-notice" aria-label="Hosting information">
+    <span class="pages-status">PROJECT SHOWCASE</span>
+    <span>Explore CampusLoop. Accounts and live rides require the full app.</span>
+    <button type="button" data-pages-help>How to try it ↗</button>
+  </aside>
+  <main id="app" tabindex="-1">
+    <section class="panel pages-loading"><h1>CampusLoop</h1><p>Loading the project showcase…</p></section>
+  </main>
+  <dialog id="pages-dialog" aria-labelledby="pages-dialog-title" aria-describedby="pages-dialog-description">
+    <div class="modal-head">
+      <h2 id="pages-dialog-title">Try the full CampusLoop app.</h2>
+      <button type="button" class="close" data-pages-close aria-label="Close dialog">×</button>
+    </div>
+    <div class="modal-body pages-dialog-body">
+      <p id="pages-dialog-description">This GitHub Pages site is the public project showcase. Accounts, ride postings, bookings, live route estimates, and the Ollama chatbot require the Python backend.</p>
+      <div class="pages-dialog-feature"><strong>Already available here</strong><p>Explore the landing page, open the FAQs, try the rider-count pricing example, and read the roadmap.</p></div>
+      <h3>Run the full app locally</h3>
+      <p>Download or clone the repository, start Docker Desktop, and open a terminal in the folder containing <code>compose.yaml</code>.</p>
+      <pre><code>HEKY_PORT=8010 docker compose up --build -d</code></pre>
+      <p>After the containers start, open <a href="http://localhost:8010" target="_blank" rel="noopener noreferrer">http://localhost:8010</a> on <strong>your own computer</strong>. Configure your Google Routes API key in your local <code>.env</code> file for live route estimates.</p>
+      <p class="pages-dialog-note">No account or booking is created on this showcase. Do not enter API keys or passwords here.</p>
+      <div class="pages-dialog-actions">
+        <a class="btn primary" data-live-app-link hidden>Open live app ↗</a>
+        <a class="btn outline" data-repository-link hidden target="_blank" rel="noopener noreferrer">View repository ↗</a>
+        <button type="button" class="btn subtle" data-pages-close>Keep exploring</button>
+      </div>
+    </div>
+  </dialog>
+  <noscript><p class="pages-noscript">Enable JavaScript to view the CampusLoop showcase and interactive pricing example. The complete application can also be run locally using Docker Compose.</p></noscript>
+</body>
+</html>

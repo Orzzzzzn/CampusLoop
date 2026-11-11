@@ -1,0 +1,68 @@
+name: Deploy CampusLoop to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'static/**'
+      - 'tests/pages_contract.cjs'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: campusloop-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Only the main branch may publish this public showcase.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Validate static entry point
+        run: |
+          node --check static/landing.js
+          node --check static/pages.js
+          node --check static/pages-config.js
+          node --test tests/pages_contract.cjs
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Assemble public files only
+        env:
+          PUBLIC_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -eu
+          mkdir -p _site/static
+          cp index.html _site/index.html
+          cp static/style.css static/landing.css static/landing.js _site/static/
+          cp static/pages.css static/pages.js static/pages-config.js _site/static/
+          cp static/landing-photo-*.jpeg _site/static/
+          touch _site/.nojekyll
+          sed -i "s/__PAGES_VERSION__/${GITHUB_SHA}/g" _site/index.html
+          node <<'NODE'
+          const fs = require('node:fs');
+          fs.appendFileSync('_site/static/pages-config.js',
+            '\nwindow.CAMPUSLOOP_PAGES.repositoryUrl = ' +
+            JSON.stringify(process.env.PUBLIC_REPOSITORY_URL) + ';\n');
+          NODE
+          # Do NOT upload the whole repository: no .env, databases, or backend files.
+      - name: Upload public site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Publish site
+        id: deployment
+        uses: actions/deploy-pages@v4
